@@ -2889,11 +2889,31 @@ button {
   align-items: center;
 }
 
-.travel-hero h2 {
+.travel-hero h2,
+.travel-title-input {
   margin: 5px 0 6px;
   color: var(--travel-ink);
   font-size: 1.45rem;
   line-height: 1.18;
+}
+
+.travel-title-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  font-weight: 950;
+  outline: none;
+  padding: 0;
+}
+
+.travel-title-input:focus {
+  background: var(--travel-surface);
+  box-shadow: 0 0 0 3px var(--travel-accent-soft);
+  padding: 4px 8px;
 }
 
 .travel-hero p,
@@ -2943,6 +2963,13 @@ button {
 
 .travel-actions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.travel-trip-actions {
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  gap: 8px;
+  justify-content: end;
 }
 
 .travel-trip-row select,
@@ -3312,6 +3339,16 @@ button {
   .travel-event-meta,
   .travel-actions {
     grid-template-columns: 1fr;
+  }
+
+  .travel-trip-actions {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .travel-trip-actions .ghost-button {
+    width: 100%;
+    min-height: 42px;
   }
 
   .travel-event {

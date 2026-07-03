@@ -78,6 +78,7 @@ const THEME_CHROME_COLORS: Record<ThemeId, { color: string; background: string; 
   night: { color: '#111a2d', background: '#111a2d', statusBar: 'black-translucent' }
 };
 const JOURNEY_IMPORT_HEADERS = ['day', '日期', '城市', '行程安排', '住宿', '交通工具', '車程/時間', '備註'];
+const JOURNEY_AUTO_TIME_SLOTS = ['09:30', '11:00', '14:30', '16:30', '18:30', '20:00'];
 const JOURNEY_COLUMN_ALIASES: Record<keyof JourneyImportRow, string[]> = {
   dayLabel: ['day', '天數', '天', 'day 1', '日期序'],
   date: ['日期', 'date', '出發日', '時間'],
@@ -2343,8 +2344,17 @@ function createBlankJourneyTrip() {
   activeJourneyTripId.value = trip.id;
   activeJourneyDayId.value = trip.days[0]?.id ?? '';
   journeyNewTripTitle.value = '';
+  journeyPanelMode.value = 'schedule';
   journeyImportMessage.value = '已建立新的空白旅程。';
   saveJourneyTrips();
+}
+
+function updateActiveJourneyTitle(value: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  const title = value.trim() || '未命名旅程';
+  if (title === trip.title) return;
+  updateJourneyTrip(trip.id, { title });
 }
 
 function removeJourneyTrip(tripId: string) {
@@ -2400,7 +2410,7 @@ function addJourneyEntry(dayId: string) {
                 transport: '',
                 duration: '',
                 note: ''
-              })
+              }, JOURNEY_AUTO_TIME_SLOTS[Math.min(day.entries.length, JOURNEY_AUTO_TIME_SLOTS.length - 1)])
             ]
           }
         : day
@@ -2457,6 +2467,16 @@ function removeJourneyEntry(dayId: string, entryId: string) {
         : day
     )
   });
+}
+
+function autoScheduleActiveJourney() {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  updateJourneyTrip(trip.id, {
+    days: trip.days.map(autoScheduleJourneyDay)
+  });
+  journeyPanelMode.value = 'schedule';
+  journeyImportMessage.value = '已依目前旅程資料重新產生分時安排。';
 }
 
 function updateJourneyTrip(tripId: string, patch: Partial<JourneyTrip>) {
@@ -2658,7 +2678,7 @@ function buildJourneyTripFromRows(rows: JourneyImportRow[], sourceName: string):
     if (!existingDay) days.push(targetDay);
     if (row.city && !targetDay.city) targetDay.city = row.city;
     if (row.stay && !targetDay.stay) targetDay.stay = row.stay;
-    targetDay.entries.push(createJourneyEntry(row));
+    targetDay.entries.push(...createJourneyEntriesFromRow(row, targetDay.entries.length));
   });
 
   const sortedDays = renumberJourneyDays(days.sort((left, right) => parseDateToDay(left.date).getTime() - parseDateToDay(right.date).getTime()));
@@ -2753,10 +2773,80 @@ function createJourneyDay(dayNumber: number, date: string, patch: Partial<Journe
   };
 }
 
-function createJourneyEntry(row: JourneyImportRow): JourneyEntry {
+function createJourneyEntriesFromRow(row: JourneyImportRow, existingCount = 0, existingTime = '') {
+  const items = splitJourneyPlanItems(row.plan);
+  const plans = items.length ? items : [row.plan || row.transport || row.note || '待安排'];
+  const noteIndex = row.transport || /抵達|到達|出發|返回|飛機|火車|巴士/.test(plans[0] ?? '') ? 0 : plans.length - 1;
+  return plans.map((plan, index) => {
+    const note = plans.length === 1 || index === noteIndex ? row.note : '';
+    return createJourneyEntry(
+      {
+        ...row,
+        plan,
+        transport: index === 0 ? row.transport : '',
+        duration: index === 0 ? row.duration : '',
+        note
+      },
+      plans.length === 1 && existingTime ? existingTime : suggestJourneyTime(row, plan, index, plans.length, existingCount)
+    );
+  });
+}
+
+function autoScheduleJourneyDay(day: JourneyPlanDay): JourneyPlanDay {
+  const entries = day.entries.flatMap((entry, index) =>
+    createJourneyEntriesFromRow(
+      {
+        dayLabel: day.dayLabel,
+        date: day.date,
+        city: entry.city || day.city,
+        plan: entry.plan,
+        stay: entry.stay || day.stay,
+        transport: entry.transport,
+        duration: entry.duration,
+        note: entry.note
+      },
+      index,
+      entry.time
+    )
+  );
+  return {
+    ...day,
+    entries: entries.length ? entries : [createJourneyEntry({ ...emptyJourneyDraftRow, dayLabel: day.dayLabel, date: day.date, city: day.city, stay: day.stay, plan: '待安排' }, '09:30')]
+  };
+}
+
+function splitJourneyPlanItems(plan: string) {
+  return plan
+    .split(/[、，,；;／\/]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function suggestJourneyTime(row: JourneyImportRow, plan: string, index: number, total: number, existingCount: number) {
+  const text = `${row.city} ${row.transport} ${row.duration} ${row.note} ${plan}`;
+  const notedTime = extractLastClockTime(row.note);
+  if (index === 0 && notedTime && /抵達|到達|降落|機場/.test(text)) return notedTime;
+  if (index === 0 && /早班|RegioJet|火車|巴士|客運|飛機|機場|出發|返回|掰掰|->|→/.test(text)) {
+    if (/早班/.test(text)) return '08:00';
+    return '08:30';
+  }
+  if (/夜景|夜|晚餐|晚上/.test(plan)) return '18:30';
+  if (/睡覺|自由|補圖|還沒研究|想去哪|待安排/.test(plan)) return index === 0 ? '11:00' : JOURNEY_AUTO_TIME_SLOTS[Math.min(existingCount + index, JOURNEY_AUTO_TIME_SLOTS.length - 1)];
+  if (total === 1 && /集中營|預約/.test(text)) return '09:00';
+  return JOURNEY_AUTO_TIME_SLOTS[Math.min(existingCount + index, JOURNEY_AUTO_TIME_SLOTS.length - 1)];
+}
+
+function extractLastClockTime(value: string) {
+  const matches = [...value.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)];
+  const match = matches[matches.length - 1];
+  if (!match) return '';
+  return `${String(Number(match[1])).padStart(2, '0')}:${match[2]}`;
+}
+
+function createJourneyEntry(row: JourneyImportRow, time = ''): JourneyEntry {
   return {
     id: createLocalId('entry'),
-    time: '',
+    time,
     city: row.city,
     plan: row.plan,
     stay: row.stay,
@@ -3681,7 +3771,14 @@ function clamp(value: number, min: number, max: number) {
       <div class="travel-hero">
         <div>
           <p class="section-kicker">共同旅程</p>
-          <h2 id="travel-board-title">{{ activeJourneyTrip?.title ?? '旅程行事曆' }}</h2>
+          <input
+            id="travel-board-title"
+            class="travel-title-input"
+            :value="activeJourneyTrip?.title ?? '旅程行事曆'"
+            aria-label="旅程名稱"
+            @change="updateActiveJourneyTitle(getInputValue($event))"
+            @blur="updateActiveJourneyTitle(getInputValue($event))"
+          />
           <p>{{ activeJourneyDateRange }} · {{ journeyTripCountdownLabel }}</p>
         </div>
         <div class="travel-progress-ring" :style="{ '--travel-progress': `${activeJourneyProgress}%` }">
@@ -3696,7 +3793,11 @@ function clamp(value: number, min: number, max: number) {
             {{ trip.title }} · {{ formatJourneyDateLabel(trip.startDate) }}
           </option>
         </select>
-        <button class="ghost-button" type="button" @click="journeyPanelMode = 'import'">匯入</button>
+        <div class="travel-trip-actions">
+          <button class="ghost-button" type="button" @click="createBlankJourneyTrip">新增旅程</button>
+          <button class="ghost-button" type="button" @click="autoScheduleActiveJourney">自動排時段</button>
+          <button class="ghost-button" type="button" @click="journeyPanelMode = 'import'">匯入</button>
+        </div>
       </div>
 
       <div class="travel-mode-switch" role="tablist" aria-label="旅程檢視">
