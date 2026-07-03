@@ -68,6 +68,8 @@ export type AppSettings = {
   boyName: string;
   girlName: string;
   theme: ThemeId;
+  startDate: string;
+  startTime: string;
   targetTime: string;
   welcomeLine: string;
   reducedMotion: boolean;

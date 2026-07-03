@@ -41,15 +41,18 @@ type BurstParticle = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const OPENING_DURATION_MS = 6400;
+const OPENING_RETURN_DURATION_MS = 4600;
+const OPENING_SKIP_DURATION_MS = 620;
+const OPENING_REDUCED_DURATION_MS = 650;
 const BOY_NAME = '大笨蛋北七';
 const GIRL_NAME = '小笨蛋粽子';
-const START_DATE = new Date(2026, 3, 8, 0, 0, 0);
-const TARGET_DATE = new Date(2026, 7, 14, 18, 0, 0);
-
 const defaultSettings: AppSettings = {
   boyName: '大笨蛋北七',
   girlName: '小笨蛋粽子',
   theme: 'peach',
+  startDate: '2026-04-08',
+  startTime: '00:00',
   targetTime: '18:00',
   welcomeLine: '把倒數放慢一點，讓見面自己靠近。',
   reducedMotion: false
@@ -646,7 +649,6 @@ const meetingMomentItems: MeetingMoment[] = [
   { id: 'quiet', label: '留一句只有彼此聽見的話' }
 ];
 
-const journeyDays = createJourneyDays();
 const now = ref(new Date());
 const taskCompleted = ref(false);
 const dailyMessage = ref('');
@@ -688,6 +690,8 @@ const newWish = ref('');
 const meetingMoments = ref<string[]>([]);
 const sceneTilt = ref({ x: 0, y: 0 });
 const introActive = ref(true);
+const introClosing = ref(false);
+const introMode = ref<'first' | 'returning'>('first');
 const flipUnits = ref<CountdownUnit[]>([]);
 const burstParticles = ref<BurstParticle[]>([]);
 const themeTransition = ref(false);
@@ -698,6 +702,7 @@ const appUnlocked = ref(false);
 const passwordInput = ref('');
 const passwordStatus = ref('');
 const passwordBusy = ref(false);
+const passwordSuccess = ref(false);
 const cloudToken = ref('');
 const cloudStatus = ref('尚未同步');
 const cloudSyncBusy = ref(false);
@@ -707,6 +712,7 @@ let timer: number | undefined;
 let secretPressTimer: number | undefined;
 let planeResetTimer: number | undefined;
 let introTimer: number | undefined;
+let passwordSuccessTimer: number | undefined;
 let themeTransitionTimer: number | undefined;
 let milestoneTimer: number | undefined;
 let cloudSyncTimer: number | undefined;
@@ -719,22 +725,30 @@ let lastCloudSnapshot = '';
 let loadingCloudSnapshot = false;
 
 const todayStart = computed(() => startOfDay(now.value));
-const rawDayIndex = computed(() => Math.floor((todayStart.value.getTime() - START_DATE.getTime()) / DAY_MS));
-const currentDayIndex = computed(() => clamp(rawDayIndex.value, 0, journeyDays.length - 1));
+const configuredStartDate = computed(() => {
+  const [year, month, day] = parseDateSetting(settings.value.startDate);
+  const [hours, minutes] = parseClockTime(settings.value.startTime, defaultSettings.startTime);
+  return new Date(year, month - 1, day, hours, minutes, 0);
+});
+const configuredStartDay = computed(() => startOfDay(configuredStartDate.value));
+const rawDayIndex = computed(() => Math.floor((todayStart.value.getTime() - configuredStartDay.value.getTime()) / DAY_MS));
 const unlockedCount = computed(() => {
-  if (todayStart.value.getTime() < START_DATE.getTime()) return 0;
-  return Math.min(rawDayIndex.value + 1, journeyDays.length);
+  if (todayStart.value.getTime() < configuredStartDay.value.getTime()) return 0;
+  return Math.min(rawDayIndex.value + 1, journeyDays.value.length);
 });
 const targetDate = computed(() => {
-  const [hours, minutes] = parseTargetTime(settings.value.targetTime);
+  const [hours, minutes] = parseClockTime(settings.value.targetTime, defaultSettings.targetTime);
   return new Date(2026, 7, 14, hours, minutes, 0);
 });
+const journeyDays = computed(() => createJourneyDays(configuredStartDay.value, targetDate.value));
+const currentDayIndex = computed(() => clamp(rawDayIndex.value, 0, journeyDays.value.length - 1));
 const targetDayStart = computed(() => startOfDay(targetDate.value));
 const isMeetingDay = computed(() => todayStart.value.getTime() >= targetDayStart.value.getTime());
 const countdown = computed<Countdown>(() => getCountdown(now.value, targetDate.value));
 const progress = computed(() => {
-  const total = targetDate.value.getTime() - START_DATE.getTime();
-  const elapsed = now.value.getTime() - START_DATE.getTime();
+  const total = targetDate.value.getTime() - configuredStartDate.value.getTime();
+  const elapsed = now.value.getTime() - configuredStartDate.value.getTime();
+  if (total <= 0) return 1;
   return clamp(elapsed / total, 0, 1);
 });
 const progressPercent = computed(() => Math.round(progress.value * 100));
@@ -759,7 +773,7 @@ const routeFillStyle = computed(() => ({
   width: `${progressPercent.value}%`
 }));
 const dateKey = computed(() => formatDateKey(todayStart.value));
-const todayJourney = computed(() => journeyDays[currentDayIndex.value]);
+const todayJourney = computed(() => journeyDays.value[currentDayIndex.value]);
 const todayNote = computed(() =>
   isMeetingDay.value
     ? `等待結束，故事正式開始。${BOY_NAME} 和 ${GIRL_NAME}，終於可以見面了。❤️`
@@ -831,9 +845,26 @@ const openingStars = computed(() =>
     size: `${3 + (index % 4)}px`
   }))
 );
+const backgroundMotes = computed(() =>
+  Array.from({ length: 22 }, (_, index) => ({
+    id: index,
+    left: `${3 + ((index * 31) % 94)}%`,
+    top: `${4 + ((index * 19) % 90)}%`,
+    delay: `${(index % 11) * 240}ms`,
+    size: `${4 + (index % 5)}px`
+  }))
+);
+const backgroundBeams = computed(() =>
+  Array.from({ length: 5 }, (_, index) => ({
+    id: index,
+    left: `${8 + index * 21}%`,
+    delay: `${index * 420}ms`
+  }))
+);
 const secretCodeList = computed(() => [...defaultSecretCodes, ...customSecretCodes.value]);
 const displayBoyName = computed(() => settings.value.boyName.trim() || BOY_NAME);
 const displayGirlName = computed(() => settings.value.girlName.trim() || GIRL_NAME);
+const startDateLabel = computed(() => `${settings.value.startDate} ${settings.value.startTime}`);
 const targetDateLabel = computed(() => `2026 年 8 月 14 日 ${settings.value.targetTime}`);
 const themeClass = computed(() => `theme-${settings.value.theme}`);
 const openingThemeLabel = computed(() => {
@@ -841,6 +872,11 @@ const openingThemeLabel = computed(() => {
   if (settings.value.theme === 'night') return '夜航啟動';
   return '暖光啟程';
 });
+const openingChapters = computed(() =>
+  introMode.value === 'first'
+    ? ['暗號通過', '同步回憶', '校準航線', '打開今天']
+    : ['歡迎回來', '更新今日', '校準距離', '回到倒數']
+);
 const ritualSteps = computed(() => [
   { id: 'open', label: '打開今日文案', done: ritualOpened.value },
   { id: 'fortune', label: '抽一張今日小籤', done: fortuneReady.value },
@@ -862,7 +898,7 @@ const dailyReceipt = computed(() =>
   ].join('\n')
 );
 const meetingSummary = computed(() => [
-  { label: '已解鎖膠囊', value: `${unlockedCount.value}/${journeyDays.length}` },
+  { label: '已解鎖膠囊', value: `${unlockedCount.value}/${journeyDays.value.length}` },
   { label: '連續打卡', value: `${checkinStreak.value} 天` },
   { label: '回憶照片', value: `${memoryPhotos.value.length} 張` },
   { label: '完成願望', value: `${wishes.value.filter((wish) => wish.done).length}/${wishes.value.length}` }
@@ -888,7 +924,7 @@ const navIndicatorStyle = computed(() => ({
 }));
 
 const visibleCapsules = computed(() =>
-  journeyDays.map((day, index) => ({
+  journeyDays.value.map((day, index) => ({
     text: day.capsule,
     dateLabel: day.dateLabel,
     index,
@@ -914,7 +950,7 @@ watch(
 
 watch(countdown, (next, previous) => {
   if (!previous) return;
-  const changed = (['days', 'hours', 'minutes', 'seconds'] as CountdownUnit[]).filter(
+  const changed = (['days', 'hours', 'minutes'] as CountdownUnit[]).filter(
     (unit) => next[unit] !== previous[unit]
   );
   if (!changed.length) return;
@@ -934,7 +970,6 @@ watch(progressPercent, (value) => {
 
 onMounted(() => {
   loadSettings();
-  introTimer = window.setTimeout(finishOpening, settings.value.reducedMotion ? 650 : 5200);
   loadSuitcase();
   loadCheckins();
   loadMoodHistory();
@@ -960,6 +995,7 @@ onUnmounted(() => {
   if (timer) window.clearInterval(timer);
   if (planeResetTimer) window.clearTimeout(planeResetTimer);
   if (introTimer) window.clearTimeout(introTimer);
+  if (passwordSuccessTimer) window.clearTimeout(passwordSuccessTimer);
   if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
   if (milestoneTimer) window.clearTimeout(milestoneTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
@@ -988,7 +1024,12 @@ async function unlockApp() {
 
   try {
     cloudToken.value = await requestCloudSession(password);
+    passwordSuccess.value = true;
+    passwordStatus.value = '暗號通過，正在打開今天。';
+    await waitForPasswordSuccess();
     appUnlocked.value = true;
+    startOpeningSequence();
+    passwordSuccess.value = false;
     passwordInput.value = '';
     passwordStatus.value = '';
     await loadCloudData();
@@ -997,6 +1038,7 @@ async function unlockApp() {
     clearCloudSession();
     cloudToken.value = '';
     appUnlocked.value = false;
+    passwordSuccess.value = false;
     passwordStatus.value = '密碼不對，提示：小笨蛋生日。';
   } finally {
     passwordBusy.value = false;
@@ -1014,6 +1056,7 @@ function restoreSavedCloudSession() {
 
   cloudToken.value = token;
   appUnlocked.value = true;
+  startOpeningSequence();
   void loadCloudData().then(startCloudSyncLoop).catch(() => {
     clearCloudSession();
     cloudToken.value = '';
@@ -1599,7 +1642,9 @@ function saveSettings() {
     boyName: settingsDraft.value.boyName.trim() || defaultSettings.boyName,
     girlName: settingsDraft.value.girlName.trim() || defaultSettings.girlName,
     theme: settingsDraft.value.theme,
-    targetTime: normalizeTargetTime(settingsDraft.value.targetTime),
+    startDate: normalizeDateSetting(settingsDraft.value.startDate),
+    startTime: normalizeClockTime(settingsDraft.value.startTime, defaultSettings.startTime),
+    targetTime: normalizeClockTime(settingsDraft.value.targetTime, defaultSettings.targetTime),
     welcomeLine: settingsDraft.value.welcomeLine.trim() || defaultSettings.welcomeLine,
     reducedMotion: settingsDraft.value.reducedMotion
   };
@@ -1636,7 +1681,9 @@ function loadSettings() {
       ...defaultSettings,
       ...parsed,
       theme: themeOptions.some((theme) => theme.id === parsed.theme) ? (parsed.theme as ThemeId) : defaultSettings.theme,
-      targetTime: normalizeTargetTime(parsed.targetTime ?? defaultSettings.targetTime),
+      startDate: normalizeDateSetting(parsed.startDate ?? defaultSettings.startDate),
+      startTime: normalizeClockTime(parsed.startTime ?? defaultSettings.startTime, defaultSettings.startTime),
+      targetTime: normalizeClockTime(parsed.targetTime ?? defaultSettings.targetTime, defaultSettings.targetTime),
       reducedMotion: Boolean(parsed.reducedMotion)
     };
     settings.value = loaded;
@@ -1768,7 +1815,7 @@ function updateSceneTilt(event: PointerEvent) {
 }
 
 function exportMeetingCalendar() {
-  const reminderDate = new Date(TARGET_DATE);
+  const reminderDate = new Date(targetDate.value);
   reminderDate.setDate(reminderDate.getDate() - 7);
   downloadCalendar(
     [
@@ -1841,12 +1888,17 @@ function endPlaneDrag() {
   }, 450);
 }
 
-function createJourneyDays(): JourneyDay[] {
-  const totalDays = Math.floor((TARGET_DATE.getTime() - START_DATE.getTime()) / DAY_MS) + 1;
+function openThemeSettings() {
+  activeTab.value = 'prepare';
+  launchThemeBurst();
+}
+
+function createJourneyDays(start: Date, target: Date): JourneyDay[] {
+  const totalDays = Math.max(Math.floor((startOfDay(target).getTime() - startOfDay(start).getTime()) / DAY_MS) + 1, 1);
 
   return Array.from({ length: totalDays }, (_, index) => {
     const dayNumber = index + 1;
-    const date = addDays(START_DATE, index);
+    const date = addDays(start, index);
     const dateLabel = formatMonthDay(date);
     const specialDay = specialJourneyDays[formatDateKey(date)];
 
@@ -1922,17 +1974,33 @@ function getCountdown(value: Date, target: Date): Countdown {
   };
 }
 
-function parseTargetTime(value: string): [number, number] {
-  const [rawHours, rawMinutes] = normalizeTargetTime(value).split(':').map(Number);
+function parseClockTime(value: string, fallback: string): [number, number] {
+  const [rawHours, rawMinutes] = normalizeClockTime(value, fallback).split(':').map(Number);
   return [rawHours, rawMinutes];
 }
 
-function normalizeTargetTime(value: string) {
+function normalizeClockTime(value: string, fallback: string) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) return defaultSettings.targetTime;
+  if (!match) return fallback;
   const hours = clamp(Number(match[1]), 0, 23);
   const minutes = clamp(Number(match[2]), 0, 59);
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function parseDateSetting(value: string): [number, number, number] {
+  const normalized = normalizeDateSetting(value);
+  const [year, month, day] = normalized.split('-').map(Number);
+  return [year, month, day];
+}
+
+function normalizeDateSetting(value: string) {
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value.trim());
+  if (!match) return defaultSettings.startDate;
+  const year = clamp(Number(match[1]), 2020, 2035);
+  const month = clamp(Number(match[2]), 1, 12);
+  const maxDay = new Date(year, month, 0).getDate();
+  const day = clamp(Number(match[3]), 1, maxDay);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 function addDays(value: Date, days: number) {
@@ -1987,8 +2055,51 @@ function gentleVibrate(duration: number) {
   }
 }
 
+function waitForPasswordSuccess() {
+  if (passwordSuccessTimer) window.clearTimeout(passwordSuccessTimer);
+  return new Promise<void>((resolve) => {
+    passwordSuccessTimer = window.setTimeout(() => {
+      passwordSuccessTimer = undefined;
+      resolve();
+    }, settings.value.reducedMotion ? 160 : 720);
+  });
+}
+
 function finishOpening() {
+  if (introTimer) {
+    window.clearTimeout(introTimer);
+    introTimer = undefined;
+  }
+  introClosing.value = false;
   introActive.value = false;
+}
+
+function startOpeningSequence() {
+  if (introTimer) window.clearTimeout(introTimer);
+  const seenOpening = localStorage.getItem(storageKey('intro-seen')) === 'yes';
+  introMode.value = seenOpening ? 'returning' : 'first';
+  localStorage.setItem(storageKey('intro-seen'), 'yes');
+  introActive.value = true;
+  introClosing.value = false;
+  introTimer = window.setTimeout(
+    finishOpening,
+    settings.value.reducedMotion
+      ? OPENING_REDUCED_DURATION_MS
+      : introMode.value === 'returning'
+        ? OPENING_RETURN_DURATION_MS
+        : OPENING_DURATION_MS
+  );
+}
+
+function requestFinishOpening() {
+  if (!introActive.value) return;
+  if (settings.value.reducedMotion) {
+    finishOpening();
+    return;
+  }
+  if (introTimer) window.clearTimeout(introTimer);
+  introClosing.value = true;
+  introTimer = window.setTimeout(finishOpening, OPENING_SKIP_DURATION_MS);
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -2012,10 +2123,18 @@ function clamp(value: number, min: number, max: number) {
       ></span>
     </div>
 
-    <button v-if="appUnlocked && introActive" class="opening-sequence" type="button" aria-label="進入第一次見面倒數" @click="finishOpening">
+    <button
+      v-if="appUnlocked && introActive"
+      class="opening-sequence"
+      :class="[`opening-${introMode}`, { closing: introClosing }]"
+      type="button"
+      aria-label="進入第一次見面倒數"
+      @click="requestFinishOpening"
+    >
       <span class="opening-grid"></span>
       <span class="opening-scan"></span>
       <span class="opening-flare"></span>
+      <span class="opening-finale" aria-hidden="true"></span>
       <span
         v-for="star in openingStars"
         :key="star.id"
@@ -2035,6 +2154,9 @@ function clamp(value: number, min: number, max: number) {
         <span>第一次見面倒數</span>
         <strong>{{ displayGirlName }} 飛向 {{ displayBoyName }}</strong>
         <em>{{ progressPercent }}% {{ openingThemeLabel }}</em>
+        <span class="opening-chapters" aria-hidden="true">
+          <i v-for="chapter in openingChapters" :key="chapter">{{ chapter }}</i>
+        </span>
         <span class="opening-status" aria-hidden="true">
           <i></i>
           <i></i>
@@ -2049,6 +2171,14 @@ function clamp(value: number, min: number, max: number) {
       <span class="aurora aurora-two"></span>
       <span class="orbit-ring orbit-one"></span>
       <span class="orbit-ring orbit-two"></span>
+      <span v-for="beam in backgroundBeams" :key="`beam-${beam.id}`" class="sky-beam" :style="{ left: beam.left, animationDelay: beam.delay }"></span>
+      <span
+        v-for="mote in backgroundMotes"
+        :key="`mote-${mote.id}`"
+        class="sky-mote"
+        :style="{ left: mote.left, top: mote.top, width: mote.size, height: mote.size, animationDelay: mote.delay }"
+      ></span>
+      <span class="sky-vortex"></span>
       <span v-for="light in theaterLights" :key="`sky-${light.id}`" class="sky-star" :style="{ left: light.left, top: light.top, animationDelay: light.delay }"></span>
     </div>
 
@@ -2069,10 +2199,25 @@ function clamp(value: number, min: number, max: number) {
           {{ passwordBusy ? '確認中...' : '進入' }}
         </button>
       </form>
+      <div v-if="passwordSuccess" class="password-success" aria-live="polite">
+        <span aria-hidden="true"></span>
+        <strong>暗號通過</strong>
+      </div>
       <p class="password-status">{{ passwordStatus || cloudStatus }}</p>
     </section>
 
     <template v-else>
+    <button
+      v-if="!introActive && activeTab !== 'prepare'"
+      class="theme-discovery"
+      type="button"
+      aria-label="前往主題切換"
+      @click="openThemeSettings"
+    >
+      <span aria-hidden="true"></span>
+      換氛圍
+    </button>
+
     <section v-if="isMeetingDay && activeTab === 'countdown'" class="theater-section" aria-labelledby="theater-title">
       <span
         v-for="light in theaterLights"
@@ -2109,7 +2254,7 @@ function clamp(value: number, min: number, max: number) {
           <strong>{{ countdown.minutes }}</strong>
           <span>分鐘</span>
         </div>
-        <div :class="{ flipping: flipUnits.includes('seconds') }">
+        <div>
           <strong>{{ countdown.seconds }}</strong>
           <span>秒</span>
         </div>
@@ -2117,6 +2262,7 @@ function clamp(value: number, min: number, max: number) {
 
       <p class="daily-line">{{ todayNote }}</p>
       <p class="target-time">目標時間：{{ targetDateLabel }}</p>
+      <p class="target-time">開始時間：{{ startDateLabel }}</p>
       <p class="welcome-line">{{ settings.welcomeLine }}</p>
     </section>
 
@@ -2296,7 +2442,7 @@ function clamp(value: number, min: number, max: number) {
         {{ checkedInToday ? '今天已留下光點' : '留下今天的光點' }}
       </button>
       <div class="checkin-dots" aria-hidden="true">
-        <span v-for="day in journeyDays.length" :key="day" :class="{ active: checkins.includes(formatDateKey(addDays(START_DATE, day - 1))) }"></span>
+        <span v-for="day in journeyDays.length" :key="day" :class="{ active: checkins.includes(formatDateKey(addDays(configuredStartDay, day - 1))) }"></span>
       </div>
     </section>
 
@@ -2529,6 +2675,14 @@ function clamp(value: number, min: number, max: number) {
           <input v-model="settingsDraft.boyName" maxlength="18" />
         </label>
         <label>
+          <span>開始日期</span>
+          <input v-model="settingsDraft.startDate" inputmode="numeric" maxlength="10" placeholder="2026-04-08" />
+        </label>
+        <label>
+          <span>開始時間</span>
+          <input v-model="settingsDraft.startTime" inputmode="numeric" maxlength="5" placeholder="00:00" />
+        </label>
+        <label>
           <span>目標時間</span>
           <input v-model="settingsDraft.targetTime" inputmode="numeric" maxlength="5" placeholder="18:00" />
         </label>
@@ -2537,6 +2691,10 @@ function clamp(value: number, min: number, max: number) {
         <span>首頁小句子</span>
         <textarea v-model="settingsDraft.welcomeLine" maxlength="42"></textarea>
       </label>
+      <div class="theme-guide">
+        <span aria-hidden="true"></span>
+        <p>想換成暖光、清風或夜航？主題開關藏在這裡。</p>
+      </div>
       <div class="theme-picker" aria-label="主題色">
         <button
           v-for="theme in themeOptions"
