@@ -22,6 +22,7 @@ import { restoreAppLocalStorage, storageKey } from './storage';
 import CountdownView from './views/CountdownView.vue';
 import JourneyView from './views/JourneyView.vue';
 import MemoriesView from './views/MemoriesView.vue';
+import PeriodView from './views/PeriodView.vue';
 import PrepareView from './views/PrepareView.vue';
 import TodayView from './views/TodayView.vue';
 import type {
@@ -36,6 +37,7 @@ import type {
   JourneyScheduleSection,
   JourneyTrip,
   MemoryPhoto,
+  PeriodRecord,
   PlaneDragState,
   Sparkle,
   ThemeId,
@@ -132,6 +134,19 @@ const updateReady = ref(false);
 const wishes = ref<WishItem[]>([]);
 const newWish = ref('');
 const meetingMoments = ref<string[]>([]);
+const periodRecords = ref<PeriodRecord[]>([]);
+const newPeriodStartDate = ref('');
+const newPeriodEndDate = ref('');
+const newPeriodNote = ref('');
+const newPeriodFlow = ref<PeriodRecord['flow']>('medium');
+const newPeriodPainLevel = ref(2);
+const newPeriodSymptoms = ref<string[]>([]);
+const newPeriodMoods = ref<string[]>([]);
+const newPeriodCare = ref<string[]>([]);
+const periodMessage = ref('');
+const editingPeriodRecordId = ref('');
+const periodCalendarOffset = ref(0);
+const periodPrivacyMode = ref(false);
 const sceneTilt = ref({ x: 0, y: 0 });
 const introActive = ref(true);
 const introClosing = ref(false);
@@ -188,8 +203,15 @@ let cloudLoadRequestId = 0;
 let localCloudFallbackRequested = false;
 let audioContext: AudioContext | null = null;
 let bgmGain: GainNode | null = null;
+let bgmFilter: BiquadFilterNode | null = null;
+let bgmDelay: DelayNode | null = null;
+let bgmDelayGain: GainNode | null = null;
+let bgmFeedbackGain: GainNode | null = null;
 let bgmTimer: number | undefined;
 let bgmOscillators: OscillatorNode[] = [];
+let bgmAudio: HTMLAudioElement | null = null;
+let bgmAudioFadeTimer: number | undefined;
+let themeStingerAudio: HTMLAudioElement | null = null;
 
 const todayStart = computed(() => startOfDay(now.value));
 const configuredStartDate = computed(() => {
@@ -462,6 +484,464 @@ const meetingSummaryLine = computed(() => {
   const moodLabel = selectedMood.value?.label ?? '未命名';
   return `目前靠近度 ${progressPercent.value}%，心情是「${moodLabel}」，已完成 ${meetingMoments.value.length} 個見面前想保留的瞬間。`;
 });
+const periodName = '粽子不痛';
+const sortedPeriodRecords = computed(() =>
+  [...periodRecords.value].sort((a, b) => parseLocalDate(a.startDate).getTime() - parseLocalDate(b.startDate).getTime())
+);
+const latestPeriodRecord = computed(() => sortedPeriodRecords.value[sortedPeriodRecords.value.length - 1] ?? null);
+const averagePeriodCycleDays = computed(() => {
+  const records = sortedPeriodRecords.value;
+  if (records.length < 2) return 28;
+  const gaps = records.slice(1).map((record, index) =>
+    Math.round((parseLocalDate(record.startDate).getTime() - parseLocalDate(records[index].startDate).getTime()) / DAY_MS)
+  );
+  const validGaps = gaps.filter((gap) => gap >= 18 && gap <= 45);
+  if (!validGaps.length) return 28;
+  return Math.round(validGaps.reduce((sum, gap) => sum + gap, 0) / validGaps.length);
+});
+const periodPredictions = computed(() => {
+  const latest = latestPeriodRecord.value;
+  if (!latest) return [];
+  const cycles = Array.from(new Set([averagePeriodCycleDays.value, 28, 30, 32])).sort((a, b) => a - b);
+  const latestStart = parseLocalDate(latest.startDate);
+  return cycles.map((cycleDays) => {
+    const nextStart = addDays(latestStart, cycleDays);
+    return {
+      cycleDays,
+      nextDate: formatPeriodDate(nextStart),
+      nextDateKey: formatDateKey(nextStart),
+      followingDate: formatPeriodDate(addDays(nextStart, cycleDays)),
+      isLikely: cycleDays === averagePeriodCycleDays.value
+    };
+  });
+});
+const nextPeriodPrediction = computed(() => periodPredictions.value.find((item) => item.isLikely) ?? periodPredictions.value[0] ?? null);
+const periodStatusLabel = computed(() => {
+  const latest = latestPeriodRecord.value;
+  if (!latest) return '還沒有紀錄';
+  const start = parseLocalDate(latest.startDate);
+  const explicitEnd = latest.endDate ? parseLocalDate(latest.endDate) : null;
+  const end = explicitEnd ?? addDays(start, 4);
+  const today = todayStart.value;
+  if (today.getTime() >= start.getTime() && today.getTime() <= end.getTime()) {
+    return periodName;
+  }
+  const next = nextPeriodPrediction.value;
+  return next ? `下次約 ${next.nextDate}` : '等待新紀錄';
+});
+const periodDaysUntilNext = computed(() => {
+  const next = nextPeriodPrediction.value;
+  if (!next) return null;
+  return Math.ceil((parseLocalDate(next.nextDateKey).getTime() - todayStart.value.getTime()) / DAY_MS);
+});
+const periodSummaryCards = computed(() => [
+  { label: '最近一次', value: latestPeriodRecord.value ? formatPeriodDate(parseLocalDate(latestPeriodRecord.value.startDate)) : '--' },
+  { label: '平均週期', value: `${averagePeriodCycleDays.value} 天` },
+  { label: '狀態', value: periodStatusLabel.value },
+  {
+    label: '距離預估',
+    value:
+      periodDaysUntilNext.value === null
+        ? '--'
+        : periodDaysUntilNext.value <= 0
+          ? '可能已到'
+          : `${periodDaysUntilNext.value} 天`
+  }
+]);
+const periodTimelineRecords = computed(() =>
+  sortedPeriodRecords.value.map((record, index, records) => {
+    const previous = records[index - 1];
+    const cycleDays = previous
+      ? Math.round((parseLocalDate(record.startDate).getTime() - parseLocalDate(previous.startDate).getTime()) / DAY_MS)
+      : null;
+    return {
+      ...record,
+      startLabel: formatPeriodDate(parseLocalDate(record.startDate)),
+      endLabel: record.endDate ? formatPeriodDate(parseLocalDate(record.endDate)) : '',
+      cycleDays
+    };
+  }).reverse()
+);
+const periodDisplayName = '粽子不痛';
+const periodFlowOptions: Array<{ id: PeriodRecord['flow']; label: string; short: string }> = [
+  { id: 'spotting', label: '點狀', short: '點' },
+  { id: 'light', label: '量少', short: '少' },
+  { id: 'medium', label: '普通', short: '中' },
+  { id: 'heavy', label: '量多', short: '多' }
+];
+const periodSymptomOptions = [
+  { id: 'cramps', label: '腹痛' },
+  { id: 'backache', label: '腰痠' },
+  { id: 'headache', label: '頭痛' },
+  { id: 'bloating', label: '脹氣' },
+  { id: 'tender', label: '胸悶' },
+  { id: 'acne', label: '長痘' },
+  { id: 'fatigue', label: '疲倦' },
+  { id: 'craving', label: '嘴饞' }
+];
+const periodMoodOptions = [
+  { id: 'stable', label: '穩定' },
+  { id: 'sensitive', label: '敏感' },
+  { id: 'low', label: '低落' },
+  { id: 'irritable', label: '煩躁' },
+  { id: 'sleepy', label: '想睡' },
+  { id: 'calm', label: '平靜' }
+];
+const periodCareOptions = [
+  { id: 'warm', label: '熱敷' },
+  { id: 'water', label: '補水' },
+  { id: 'rest', label: '早點休息' },
+  { id: 'medicine', label: '止痛藥' },
+  { id: 'light-meal', label: '清淡飲食' }
+];
+const periodCycleGaps = computed(() => {
+  const records = sortedPeriodRecords.value;
+  return records.slice(1)
+    .map((record, index) =>
+      Math.round((parseLocalDate(record.startDate).getTime() - parseLocalDate(records[index].startDate).getTime()) / DAY_MS)
+    )
+    .filter((gap) => gap >= 18 && gap <= 45);
+});
+const professionalPeriodLengthDays = computed(() => {
+  const lengths = sortedPeriodRecords.value.map((record) => {
+    const start = parseLocalDate(record.startDate);
+    const end = record.endDate ? parseLocalDate(record.endDate) : addDays(start, 4);
+    return clamp(Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1, 1, 10);
+  });
+  if (!lengths.length) return 5;
+  return Math.round(lengths.reduce((sum, length) => sum + length, 0) / lengths.length);
+});
+const periodCycleStats = computed(() => {
+  const gaps = periodCycleGaps.value;
+  const average = averagePeriodCycleDays.value;
+  const shortest = gaps.length ? Math.min(...gaps) : average;
+  const longest = gaps.length ? Math.max(...gaps) : average;
+  const variation = longest - shortest;
+  const regularity = gaps.length < 2 ? '資料累積中' : variation <= 3 ? '規律' : variation <= 7 ? '略有浮動' : '變動較大';
+  return {
+    average,
+    shortest,
+    longest,
+    variation,
+    regularity,
+    count: gaps.length
+  };
+});
+const professionalPeriodPredictions = computed(() => {
+  const latest = latestPeriodRecord.value;
+  if (!latest) return [];
+  const cycles = Array.from(new Set([
+    averagePeriodCycleDays.value,
+    periodCycleStats.value.shortest,
+    periodCycleStats.value.longest,
+    28,
+    30,
+    32
+  ])).filter((cycleDays) => cycleDays >= 18 && cycleDays <= 45).sort((a, b) => a - b);
+  const latestStart = parseLocalDate(latest.startDate);
+  return cycles.map((cycleDays) => {
+    const nextStart = addDays(latestStart, cycleDays);
+    const nextEnd = addDays(nextStart, Math.max(professionalPeriodLengthDays.value - 1, 0));
+    const ovulationDate = addDays(nextStart, -14);
+    const fertileStart = addDays(ovulationDate, -5);
+    return {
+      cycleDays,
+      nextDate: formatPeriodDate(nextStart),
+      nextDateKey: formatDateKey(nextStart),
+      endDate: formatPeriodDate(nextEnd),
+      followingDate: formatPeriodDate(addDays(nextStart, cycleDays)),
+      pmsStart: formatPeriodDate(addDays(nextStart, -7)),
+      fertileWindow: `${formatPeriodDate(fertileStart)}-${formatPeriodDate(ovulationDate)}`,
+      ovulationDate: formatPeriodDate(ovulationDate),
+      isLikely: cycleDays === averagePeriodCycleDays.value
+    };
+  });
+});
+const professionalNextPeriodPrediction = computed(() =>
+  professionalPeriodPredictions.value.find((item) => item.isLikely) ?? professionalPeriodPredictions.value[0] ?? null
+);
+const professionalPeriodDaysUntilNext = computed(() => {
+  const next = professionalNextPeriodPrediction.value;
+  if (!next) return null;
+  return Math.ceil((parseLocalDate(next.nextDateKey).getTime() - todayStart.value.getTime()) / DAY_MS);
+});
+const periodConfidenceLabel = computed(() => {
+  if (periodCycleStats.value.count < 2) return '資料累積中';
+  if (periodCycleStats.value.variation <= 3) return '高';
+  if (periodCycleStats.value.variation <= 7) return '中';
+  return '低';
+});
+const professionalPeriodPhase = computed(() => {
+  const today = todayStart.value;
+  const latest = latestPeriodRecord.value;
+  if (latest) {
+    const start = parseLocalDate(latest.startDate);
+    const end = latest.endDate ? parseLocalDate(latest.endDate) : addDays(start, professionalPeriodLengthDays.value - 1);
+    if (today.getTime() >= start.getTime() && today.getTime() <= end.getTime()) {
+      return { label: periodDisplayName, tone: 'period', copy: '今天以舒服、保暖、低壓行程為主。' };
+    }
+  }
+  const next = professionalNextPeriodPrediction.value;
+  if (!next) return { label: '等待紀錄', tone: 'quiet', copy: '再多記幾次，預測會更貼近她的節奏。' };
+  const nextStart = parseLocalDate(next.nextDateKey);
+  const ovulation = addDays(nextStart, -14);
+  const fertileStart = addDays(ovulation, -5);
+  if (formatDateKey(today) === formatDateKey(ovulation)) {
+    return { label: '預估排卵日', tone: 'ovulation', copy: '這只是週期推估，不能當避孕或受孕的唯一依據。' };
+  }
+  if (today.getTime() >= fertileStart.getTime() && today.getTime() <= ovulation.getTime()) {
+    return { label: '預估受孕窗', tone: 'fertile', copy: '成熟 app 常用 6 天受孕窗表示，但仍要搭配實際身體訊號。' };
+  }
+  const days = professionalPeriodDaysUntilNext.value;
+  if (days !== null && days >= 0 && days <= 7) {
+    return { label: '經前照護期', tone: 'pms', copy: '可以提前準備止痛、熱敷和不趕行程的安排。' };
+  }
+  return { label: '一般週期日', tone: 'quiet', copy: '持續累積症狀與心情，之後比較容易看出個人模式。' };
+});
+const professionalPeriodSummaryCards = computed(() => [
+  { label: '最近一次', value: latestPeriodRecord.value ? formatPeriodDate(parseLocalDate(latestPeriodRecord.value.startDate)) : '--' },
+  { label: '平均週期', value: `${averagePeriodCycleDays.value} 天` },
+  { label: '平均經期', value: `${professionalPeriodLengthDays.value} 天` },
+  { label: '預測信心', value: periodConfidenceLabel.value },
+  { label: '規律度', value: periodCycleStats.value.regularity },
+  {
+    label: '距離預估',
+    value:
+      professionalPeriodDaysUntilNext.value === null
+        ? '--'
+        : professionalPeriodDaysUntilNext.value <= 0
+          ? '可能已到'
+          : `${professionalPeriodDaysUntilNext.value} 天`
+  }
+]);
+const editingPeriodRecord = computed(() => periodRecords.value.find((record) => record.id === editingPeriodRecordId.value) ?? null);
+const periodRecordFormTitle = computed(() => editingPeriodRecord.value ? '修改這筆狀況' : '把這次狀況記清楚');
+const periodRecordSubmitLabel = computed(() => editingPeriodRecord.value ? '更新紀錄' : '儲存紀錄');
+const periodCalendarStart = computed(() => addDays(startOfDay(todayStart.value), periodCalendarOffset.value * 28));
+const periodCalendarRangeLabel = computed(() => {
+  const start = periodCalendarStart.value;
+  const end = addDays(start, 41);
+  return `${formatPeriodDate(start)} - ${formatPeriodDate(end)}`;
+});
+const periodReminderCards = computed(() => {
+  const next = professionalNextPeriodPrediction.value;
+  if (!next) return [];
+  const nextStart = parseLocalDate(next.nextDateKey);
+  const toStatus = (date: Date) => {
+    const days = Math.ceil((date.getTime() - todayStart.value.getTime()) / DAY_MS);
+    if (days < 0) return '已過';
+    if (days === 0) return '今天';
+    if (days === 1) return '明天';
+    return `${days} 天後`;
+  };
+  return [
+    {
+      label: '經前照護',
+      date: formatPeriodDate(addDays(nextStart, -7)),
+      status: toStatus(addDays(nextStart, -7)),
+      detail: '把止痛、熱敷、早睡和低壓行程先排進去。',
+      tone: 'care'
+    },
+    {
+      label: '用品準備',
+      date: formatPeriodDate(addDays(nextStart, -3)),
+      status: toStatus(addDays(nextStart, -3)),
+      detail: '檢查衛生用品、暖暖包與外出備品。',
+      tone: 'supply'
+    },
+    {
+      label: '預估開始',
+      date: next.nextDate,
+      status: toStatus(nextStart),
+      detail: '若有提前或延後，記一筆會讓下次更準。',
+      tone: 'start'
+    },
+    {
+      label: '延後觀察',
+      date: formatPeriodDate(addDays(nextStart, 7)),
+      status: toStatus(addDays(nextStart, 7)),
+      detail: '超過一週仍沒來，留意壓力、作息或懷孕可能。',
+      tone: 'watch'
+    }
+  ];
+});
+const periodAnomalyAlerts = computed(() => {
+  const alerts: Array<{ title: string; detail: string; tone: string }> = [];
+  const latest = latestPeriodRecord.value;
+  const latestStart = latest ? parseLocalDate(latest.startDate) : null;
+  const latestEnd = latest && latest.endDate ? parseLocalDate(latest.endDate) : null;
+  const latestLength = latest && latestEnd && latestStart
+    ? Math.round((latestEnd.getTime() - latestStart.getTime()) / DAY_MS) + 1
+    : 0;
+  const lastGap = periodCycleGaps.value[periodCycleGaps.value.length - 1] ?? null;
+  const daysUntilNext = professionalPeriodDaysUntilNext.value;
+
+  if (daysUntilNext !== null && daysUntilNext < -7) {
+    alerts.push({
+      title: '預估日已超過一週',
+      detail: '如果有懷孕可能、壓力很大或身體不舒服，建議優先確認狀況。',
+      tone: 'watch'
+    });
+  }
+  if (lastGap !== null && (lastGap < 21 || lastGap > 35)) {
+    alerts.push({
+      title: `最近週期是 ${lastGap} 天`,
+      detail: '和常見 21-35 天範圍不同，先記下作息、壓力或藥物變化。',
+      tone: 'cycle'
+    });
+  }
+  if (periodCycleStats.value.count >= 2 && periodCycleStats.value.variation > 9) {
+    alerts.push({
+      title: '週期浮動變大',
+      detail: `目前最短 ${periodCycleStats.value.shortest} 天、最長 ${periodCycleStats.value.longest} 天，可以多觀察幾次。`,
+      tone: 'cycle'
+    });
+  }
+  if (latest && latest.painLevel >= 7) {
+    alerts.push({
+      title: '疼痛分數偏高',
+      detail: '如果止痛後仍影響生活，或突然比平常痛很多，建議詢問醫師。',
+      tone: 'pain'
+    });
+  }
+  if (latest && latest.flow === 'heavy' && latestLength >= 7) {
+    alerts.push({
+      title: '量多且持續較久',
+      detail: '若伴隨頭暈、血塊很多或出血超過一週，請考慮就醫確認。',
+      tone: 'flow'
+    });
+  } else if (latestLength > 8) {
+    alerts.push({
+      title: '經期天數偏長',
+      detail: `這次紀錄 ${latestLength} 天，若和以往差很多可以先標記並觀察。`,
+      tone: 'flow'
+    });
+  }
+
+  return alerts.slice(0, 3);
+});
+const periodCareSuggestionCards = computed(() => {
+  const latest = latestPeriodRecord.value;
+  const suggestions = [
+    professionalPeriodPhase.value.tone === 'pms'
+      ? { title: '把行程降速', detail: '接近預估開始日，適合少排奔波、先準備熱敷和止痛。' }
+      : professionalPeriodPhase.value.tone === 'period'
+        ? { title: '今天以舒服優先', detail: '補水、保暖、清淡飲食，疼痛升高時就不要硬撐。' }
+        : professionalPeriodPhase.value.tone === 'fertile' || professionalPeriodPhase.value.tone === 'ovulation'
+          ? { title: '記錄身體訊號', detail: '分泌物、體溫、腹部感覺都可以補一點，之後更好比對。' }
+          : { title: '維持基本節奏', detail: '睡眠、飲水和活動量穩定，會讓後面的週期判讀更清楚。' },
+    latest?.painLevel && latest.painLevel >= 5
+      ? { title: '疼痛備案', detail: '把有效的止痛方式寫進備註，下次經前照護會更容易準備。' }
+      : { title: '備好小物', detail: '外出包可以固定放 1-2 份用品，避免預估日臨時緊張。' },
+    latest?.flow === 'heavy'
+      ? { title: '量多日提醒', detail: '用品更換頻率、頭暈感和血塊大小可以特別留意。' }
+      : { title: '補一點感受', detail: '心情和症狀比日期更能看出個人模式，簡短點選就夠。' }
+  ];
+  return suggestions;
+});
+const periodTrendRows = computed(() =>
+  sortedPeriodRecords.value.slice(-6).map((record, index, records) => {
+    const previous = index > 0 ? records[index - 1] : null;
+    const start = parseLocalDate(record.startDate);
+    const end = record.endDate ? parseLocalDate(record.endDate) : addDays(start, professionalPeriodLengthDays.value - 1);
+    const cycleDays = previous
+      ? Math.round((start.getTime() - parseLocalDate(previous.startDate).getTime()) / DAY_MS)
+      : null;
+    const periodLength = clamp(Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1, 1, 12);
+    return {
+      id: record.id,
+      label: formatPeriodDate(start),
+      cycleDays,
+      periodLength,
+      painLevel: clamp(Number(record.painLevel ?? 0), 0, 10),
+      cycleWidth: `${cycleDays ? clamp(Math.round((cycleDays / 45) * 100), 26, 100) : 18}%`,
+      lengthWidth: `${clamp(Math.round((periodLength / 10) * 100), 18, 100)}%`,
+      painWidth: `${clamp(Math.round((clamp(Number(record.painLevel ?? 0), 0, 10) / 10) * 100), 8, 100)}%`
+    };
+  }).reverse()
+);
+const professionalPeriodCalendarDays = computed(() => {
+  const start = periodCalendarStart.value;
+  const next = professionalNextPeriodPrediction.value;
+  const predictedStart = next ? parseLocalDate(next.nextDateKey) : null;
+  const predictedEnd = predictedStart ? addDays(predictedStart, professionalPeriodLengthDays.value - 1) : null;
+  const ovulation = predictedStart ? addDays(predictedStart, -14) : null;
+  const fertileStart = ovulation ? addDays(ovulation, -5) : null;
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(start, index);
+    const key = formatDateKey(date);
+    const actualRecord = sortedPeriodRecords.value.find((record) => {
+      const recordStart = parseLocalDate(record.startDate);
+      const recordEnd = record.endDate ? parseLocalDate(record.endDate) : addDays(recordStart, professionalPeriodLengthDays.value - 1);
+      return date.getTime() >= recordStart.getTime() && date.getTime() <= recordEnd.getTime();
+    });
+    const isPredictedPeriod = Boolean(predictedStart && predictedEnd && date.getTime() >= predictedStart.getTime() && date.getTime() <= predictedEnd.getTime());
+    const isFertile = Boolean(fertileStart && ovulation && date.getTime() >= fertileStart.getTime() && date.getTime() <= ovulation.getTime());
+    const isOvulation = Boolean(ovulation && key === formatDateKey(ovulation));
+    const markers = [
+      actualRecord ? 'recorded' : '',
+      !actualRecord && isPredictedPeriod ? 'predicted' : '',
+      isFertile ? 'fertile' : '',
+      isOvulation ? 'ovulation' : '',
+      key === dateKey.value ? 'today' : ''
+    ].filter(Boolean);
+    return {
+      key,
+      dayNumber: date.getDate(),
+      weekday: ['日', '一', '二', '三', '四', '五', '六'][date.getDay()],
+      label: actualRecord ? periodDisplayName : isOvulation ? '排卵' : isFertile ? '受孕窗' : isPredictedPeriod ? '預估' : '',
+      classes: markers.map((marker) => `is-${marker}`)
+    };
+  });
+});
+const professionalPeriodInsightCards = computed(() => {
+  const records = sortedPeriodRecords.value;
+  const symptomCounts = new Map<string, number>();
+  const moodCounts = new Map<string, number>();
+  records.forEach((record) => {
+    (record.symptoms ?? []).forEach((id) => symptomCounts.set(id, (symptomCounts.get(id) ?? 0) + 1));
+    (record.moods ?? []).forEach((id) => moodCounts.set(id, (moodCounts.get(id) ?? 0) + 1));
+  });
+  const topSymptomId = [...symptomCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+  const topMoodId = [...moodCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+  const painRecords = records.filter((record) => record.painLevel > 0);
+  const averagePain = painRecords.length
+    ? Math.round((painRecords.reduce((sum, record) => sum + record.painLevel, 0) / painRecords.length) * 10) / 10
+    : 0;
+  return [
+    { label: '常見症狀', value: periodSymptomOptions.find((item) => item.id === topSymptomId)?.label ?? '尚未累積' },
+    { label: '常見心情', value: periodMoodOptions.find((item) => item.id === topMoodId)?.label ?? '尚未累積' },
+    { label: '平均疼痛', value: averagePain ? `${averagePain}/10` : '尚未紀錄' },
+    { label: '週期範圍', value: `${periodCycleStats.value.shortest}-${periodCycleStats.value.longest} 天` }
+  ];
+});
+const professionalPeriodTimelineRecords = computed(() =>
+  sortedPeriodRecords.value.map((record, index, records) => {
+    const previous = records[index - 1];
+    const cycleDays = previous
+      ? Math.round((parseLocalDate(record.startDate).getTime() - parseLocalDate(previous.startDate).getTime()) / DAY_MS)
+      : null;
+    const flowLabel = periodFlowOptions.find((item) => item.id === record.flow)?.label ?? '未記錄';
+    const symptomLabels = (record.symptoms ?? [])
+      .map((id) => periodSymptomOptions.find((item) => item.id === id)?.label)
+      .filter(Boolean)
+      .join('、');
+    const moodLabels = (record.moods ?? [])
+      .map((id) => periodMoodOptions.find((item) => item.id === id)?.label)
+      .filter(Boolean)
+      .join('、');
+    return {
+      ...record,
+      startLabel: formatPeriodDate(parseLocalDate(record.startDate)),
+      endLabel: record.endDate ? formatPeriodDate(parseLocalDate(record.endDate)) : '',
+      cycleDays,
+      flowLabel,
+      symptomLabels,
+      moodLabels
+    };
+  }).reverse()
+);
 const pendingImportSummary = computed(() => {
   if (!pendingImport.value) return '';
   return `準備${importMode.value === 'replace' ? '覆蓋' : '合併'}：${Object.keys(pendingImport.value.localStorage).length} 筆紀錄、${pendingImport.value.photos.length} 張照片。`;
@@ -471,7 +951,7 @@ const sceneStyle = computed(() => ({
   '--scene-tilt-y': `${sceneTilt.value.y}deg`
 }));
 const activeTabIndex = computed(() => {
-  const tabs: ActiveTab[] = ['countdown', 'today', 'journey', 'memories', 'prepare'];
+  const tabs: ActiveTab[] = ['countdown', 'today', 'journey', 'period', 'memories', 'prepare'];
   return Math.max(tabs.indexOf(activeTab.value), 0);
 });
 const navIndicatorStyle = computed(() => ({
@@ -722,6 +1202,8 @@ onMounted(() => {
   loadMeetingChecklist();
   loadWishes();
   loadMeetingMoments();
+  loadPeriodRecords();
+  loadPeriodPrivacyMode();
   checkForAppUpdate();
   window.addEventListener('online', updateOnlineState);
   window.addEventListener('offline', updateOnlineState);
@@ -1449,6 +1931,8 @@ function reloadPersistentState() {
   loadWishes();
   loadMeetingMoments();
   loadJourneyTrips();
+  loadPeriodRecords();
+  loadPeriodPrivacyMode();
 }
 
 function resetToday() {
@@ -1544,17 +2028,24 @@ function resetSettings() {
 }
 
 function previewThemeSelection(theme: ThemeId) {
+  const previousTheme = settings.value.theme;
   settingsDraft.value.theme = theme;
-  previewTheme.value = theme;
-  themeTransition.value = true;
+  if (previousTheme === theme) return;
+
+  settings.value = { ...settings.value, theme };
+  settingsDraft.value = { ...settingsDraft.value, theme };
+  previewTheme.value = '';
   if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
+  localStorage.setItem(storageKey('settings'), JSON.stringify(settings.value));
+  setSettingsUpdatedAt();
+  themeTransition.value = true;
   if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
   themeTransitionTimer = window.setTimeout(() => {
     themeTransition.value = false;
   }, 900);
-  themePreviewTimer = window.setTimeout(() => {
-    previewTheme.value = '';
-  }, 2000);
+  requestCloudSync();
+  playThemeSwitchMotif(theme);
+  gentleVibrate(8);
 }
 
 function dismissOnboarding() {
@@ -1674,6 +2165,192 @@ function loadMeetingMoments() {
   } catch {
     meetingMoments.value = [];
   }
+}
+
+function parseLocalDate(dateString: string) {
+  const [year, month, day] = parseDateSetting(dateString, '2026-01-01');
+  return new Date(year, month - 1, day);
+}
+
+function formatPeriodDate(date: Date) {
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function createDefaultPeriodRecords(): PeriodRecord[] {
+  return [
+    {
+      id: 'period-2026-05-12',
+      startDate: '2026-05-12',
+      endDate: '',
+      flow: '',
+      painLevel: 0,
+      symptoms: [],
+      moods: [],
+      care: [],
+      note: '已知紀錄',
+      createdAt: '2026-05-12T00:00:00.000Z'
+    },
+    {
+      id: 'period-2026-06-09',
+      startDate: '2026-06-09',
+      endDate: '',
+      flow: '',
+      painLevel: 0,
+      symptoms: [],
+      moods: [],
+      care: [],
+      note: '已知紀錄，與上次相隔 28 天',
+      createdAt: '2026-06-09T00:00:00.000Z'
+    }
+  ];
+}
+function normalizePeriodRecord(record: Partial<PeriodRecord>) {
+  const startDate = normalizeDateSetting(record.startDate ?? '', '2026-01-01');
+  const endDate = record.endDate ? normalizeDateSetting(record.endDate, startDate) : '';
+  return {
+    id: typeof record.id === 'string' && record.id ? record.id : createLocalId('period'),
+    startDate,
+    endDate,
+    flow: ['spotting', 'light', 'medium', 'heavy'].includes(String(record.flow)) ? (record.flow as PeriodRecord['flow']) : '',
+    painLevel: clamp(Number(record.painLevel ?? 0), 0, 10),
+    symptoms: Array.isArray(record.symptoms) ? record.symptoms.filter((item): item is string => typeof item === 'string') : [],
+    moods: Array.isArray(record.moods) ? record.moods.filter((item): item is string => typeof item === 'string') : [],
+    care: Array.isArray(record.care) ? record.care.filter((item): item is string => typeof item === 'string') : [],
+    note: typeof record.note === 'string' ? record.note.slice(0, 80) : '',
+    createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString()
+  };
+}
+
+function savePeriodRecords() {
+  localStorage.setItem(storageKey('period-records'), JSON.stringify(periodRecords.value));
+  requestCloudSync();
+}
+
+function loadPeriodRecords() {
+  const stored = localStorage.getItem(storageKey('period-records'));
+  if (!stored) {
+    periodRecords.value = createDefaultPeriodRecords();
+    localStorage.setItem(storageKey('period-records'), JSON.stringify(periodRecords.value));
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed)) {
+      periodRecords.value = parsed
+        .filter((record) => typeof record?.startDate === 'string')
+        .map((record) => normalizePeriodRecord(record))
+        .slice(0, 36);
+    }
+  } catch {
+    periodRecords.value = createDefaultPeriodRecords();
+  }
+}
+
+function loadPeriodPrivacyMode() {
+  periodPrivacyMode.value = localStorage.getItem(storageKey('period-privacy-mode')) === 'true';
+}
+
+function resetPeriodForm() {
+  editingPeriodRecordId.value = '';
+  newPeriodStartDate.value = '';
+  newPeriodEndDate.value = '';
+  newPeriodNote.value = '';
+  newPeriodFlow.value = 'medium';
+  newPeriodPainLevel.value = 2;
+  newPeriodSymptoms.value = [];
+  newPeriodMoods.value = [];
+  newPeriodCare.value = [];
+}
+
+function addPeriodRecord() {
+  if (!newPeriodStartDate.value) {
+    periodMessage.value = '先選擇開始日期。';
+    return;
+  }
+
+  const startDate = normalizeDateSetting(newPeriodStartDate.value);
+  const endDate = newPeriodEndDate.value ? normalizeDateSetting(newPeriodEndDate.value) : '';
+  if (endDate && parseLocalDate(endDate).getTime() < parseLocalDate(startDate).getTime()) {
+    periodMessage.value = '結束日期不能早於開始日期。';
+    return;
+  }
+
+  const existingRecord = editingPeriodRecord.value;
+  const recordId = existingRecord?.id ?? createLocalId('period');
+  periodRecords.value = [
+    ...periodRecords.value.filter((record) => record.id !== recordId && record.startDate !== startDate),
+    {
+      id: recordId,
+      startDate,
+      endDate,
+      flow: newPeriodFlow.value,
+      painLevel: clamp(Number(newPeriodPainLevel.value), 0, 10),
+      symptoms: [...newPeriodSymptoms.value],
+      moods: [...newPeriodMoods.value],
+      care: [...newPeriodCare.value],
+      note: newPeriodNote.value.trim().slice(0, 80),
+      createdAt: existingRecord?.createdAt ?? new Date().toISOString()
+    }
+  ].slice(-36);
+  periodMessage.value = existingRecord ? '已更新這筆紀錄。' : '已記錄，預測已更新。';
+  resetPeriodForm();
+  savePeriodRecords();
+  playSoftSound('success');
+}
+
+function removePeriodRecord(id: string) {
+  periodRecords.value = periodRecords.value.filter((record) => record.id !== id);
+  if (editingPeriodRecordId.value === id) {
+    resetPeriodForm();
+  }
+  periodMessage.value = '已移除這筆紀錄。';
+  savePeriodRecords();
+}
+
+function startEditPeriodRecord(id: string) {
+  const record = periodRecords.value.find((item) => item.id === id);
+  if (!record) return;
+  editingPeriodRecordId.value = record.id;
+  newPeriodStartDate.value = record.startDate;
+  newPeriodEndDate.value = record.endDate;
+  newPeriodNote.value = record.note;
+  newPeriodFlow.value = record.flow || 'medium';
+  newPeriodPainLevel.value = clamp(Number(record.painLevel ?? 0), 0, 10);
+  newPeriodSymptoms.value = [...(record.symptoms ?? [])];
+  newPeriodMoods.value = [...(record.moods ?? [])];
+  newPeriodCare.value = [...(record.care ?? [])];
+  periodMessage.value = '正在修改這筆紀錄。';
+}
+
+function cancelEditPeriodRecord() {
+  resetPeriodForm();
+  periodMessage.value = '已取消修改。';
+}
+
+function shiftPeriodCalendar(delta: number) {
+  periodCalendarOffset.value = clamp(periodCalendarOffset.value + delta, -12, 12);
+}
+
+function resetPeriodCalendar() {
+  periodCalendarOffset.value = 0;
+}
+
+function togglePeriodPrivacyMode() {
+  periodPrivacyMode.value = !periodPrivacyMode.value;
+  localStorage.setItem(storageKey('period-privacy-mode'), String(periodPrivacyMode.value));
+}
+
+function togglePeriodSelection(target: 'symptom' | 'mood' | 'care', id: string) {
+  const source =
+    target === 'symptom'
+      ? newPeriodSymptoms
+      : target === 'mood'
+        ? newPeriodMoods
+        : newPeriodCare;
+  source.value = source.value.includes(id)
+    ? source.value.filter((item) => item !== id)
+    : [...source.value, id];
 }
 
 function updateOnlineState() {
@@ -2102,12 +2779,17 @@ function exportMeetingCalendar() {
 }
 
 type SoftSoundKind = 'tap' | 'success' | 'paper' | 'secret' | 'radar';
+type BackgroundRole = 'pad' | 'bass' | 'melody' | 'shimmer' | 'musicbox' | 'windbell' | 'drone' | 'beacon';
 type BackgroundNote = { note: number; beat: number; duration: number; volume: number };
 type BackgroundChord = { notes: number[]; beat: number; duration: number; volume: number };
 type BackgroundMusicTheme = {
+  style: 'lullaby' | 'chimes' | 'nocturne';
   bpm: number;
   loopBeats: number;
   masterVolume: number;
+  filterFrequency: number;
+  echoDelay: number;
+  echoVolume: number;
   padWave: OscillatorType;
   melodyWave: OscillatorType;
   bassWave: OscillatorType;
@@ -2119,17 +2801,21 @@ type BackgroundMusicTheme = {
 
 const backgroundMusicThemes: Record<ThemeId, BackgroundMusicTheme> = {
   peach: createBackgroundMusicTheme({
-    bpm: 72,
-    loopBeats: 64,
-    masterVolume: 0.72,
-    padWave: 'sine',
-    melodyWave: 'triangle',
+    style: 'lullaby',
+    bpm: 58,
+    loopBeats: 72,
+    masterVolume: 0.38,
+    filterFrequency: 2600,
+    echoDelay: 0.46,
+    echoVolume: 0.055,
+    padWave: 'triangle',
+    melodyWave: 'sine',
     bassWave: 'sine',
     chordBeats: 4,
-    chordVolume: 0.015,
-    bassVolume: 0.018,
-    melodyVolume: 0.032,
-    shimmerVolume: 0.011,
+    chordVolume: 0.018,
+    bassVolume: 0.012,
+    melodyVolume: 0.02,
+    shimmerVolume: 0.006,
     chords: [
       [48, 55, 59, 64],
       [45, 52, 57, 60],
@@ -2158,17 +2844,21 @@ const backgroundMusicThemes: Record<ThemeId, BackgroundMusicTheme> = {
     shimmerNotes: [76, -1, 79, -1, 81, 79, 76, -1, 72, -1, 76, 79, 84, -1, 81, -1]
   }),
   mint: createBackgroundMusicTheme({
-    bpm: 84,
+    style: 'chimes',
+    bpm: 92,
     loopBeats: 64,
-    masterVolume: 0.62,
-    padWave: 'triangle',
+    masterVolume: 0.28,
+    filterFrequency: 7200,
+    echoDelay: 0.22,
+    echoVolume: 0.18,
+    padWave: 'sine',
     melodyWave: 'sine',
     bassWave: 'triangle',
     chordBeats: 4,
     chordVolume: 0.012,
-    bassVolume: 0.014,
-    melodyVolume: 0.029,
-    shimmerVolume: 0.014,
+    bassVolume: 0.009,
+    melodyVolume: 0.018,
+    shimmerVolume: 0.009,
     chords: [
       [50, 57, 62, 66],
       [45, 52, 57, 61],
@@ -2197,17 +2887,21 @@ const backgroundMusicThemes: Record<ThemeId, BackgroundMusicTheme> = {
     shimmerNotes: [86, 83, -1, 81, 78, -1, 81, 83, 86, -1, 88, 86, 83, -1, 81, -1]
   }),
   night: createBackgroundMusicTheme({
-    bpm: 64,
-    loopBeats: 64,
-    masterVolume: 0.8,
+    style: 'nocturne',
+    bpm: 44,
+    loopBeats: 48,
+    masterVolume: 0.48,
+    filterFrequency: 1200,
+    echoDelay: 0.72,
+    echoVolume: 0.04,
     padWave: 'sine',
     melodyWave: 'sine',
     bassWave: 'sine',
     chordBeats: 4,
-    chordVolume: 0.018,
-    bassVolume: 0.02,
-    melodyVolume: 0.028,
-    shimmerVolume: 0.009,
+    chordVolume: 0.02,
+    bassVolume: 0.016,
+    melodyVolume: 0.017,
+    shimmerVolume: 0.004,
     chords: [
       [45, 52, 57, 60],
       [40, 47, 52, 55],
@@ -2235,6 +2929,24 @@ const backgroundMusicThemes: Record<ThemeId, BackgroundMusicTheme> = {
     ],
     shimmerNotes: [81, -1, 84, -1, 88, -1, 86, -1, 84, -1, 81, -1, 79, -1, 81, -1]
   })
+};
+
+const backgroundAudioSources: Record<ThemeId, string> = {
+  peach: `${import.meta.env.BASE_URL}audio/theme-peach.wav`,
+  mint: `${import.meta.env.BASE_URL}audio/theme-mint.wav`,
+  night: `${import.meta.env.BASE_URL}audio/theme-night.wav`
+};
+
+const backgroundStingerSources: Record<ThemeId, string> = {
+  peach: `${import.meta.env.BASE_URL}audio/theme-peach-stinger.wav`,
+  mint: `${import.meta.env.BASE_URL}audio/theme-mint-stinger.wav`,
+  night: `${import.meta.env.BASE_URL}audio/theme-night-stinger.wav`
+};
+
+const backgroundAudioVolumes: Record<ThemeId, number> = {
+  peach: 0.42,
+  mint: 0.36,
+  night: 0.44
 };
 
 function getAudioContext() {
@@ -2318,10 +3030,60 @@ function playSoftSound(kind: SoftSoundKind) {
   });
 }
 
+function playThemeSwitchMotif(theme: ThemeId) {
+  if (!settings.value.soundFeedback) return;
+
+  themeStingerAudio?.pause();
+  themeStingerAudio = new Audio(backgroundStingerSources[theme]);
+  themeStingerAudio.volume = Math.min(backgroundAudioVolumes[theme] + 0.16, 0.62);
+  void themeStingerAudio.play().catch(() => {
+    playThemeSwitchFallback(theme);
+  });
+}
+
+function playThemeSwitchFallback(theme: ThemeId) {
+  const context = unlockAudio();
+  if (!context) return;
+
+  const motifs: Record<ThemeId, Array<{ note: number; at: number; duration: number; volume: number; role: BackgroundRole }>> = {
+    peach: [
+      { note: 65, at: 0, duration: 0.8, volume: 0.028, role: 'musicbox' },
+      { note: 69, at: 0.24, duration: 0.9, volume: 0.026, role: 'musicbox' },
+      { note: 72, at: 0.5, duration: 1.1, volume: 0.024, role: 'musicbox' }
+    ],
+    mint: [
+      { note: 86, at: 0, duration: 0.9, volume: 0.024, role: 'windbell' },
+      { note: 93, at: 0.16, duration: 1.1, volume: 0.022, role: 'windbell' },
+      { note: 98, at: 0.32, duration: 1.2, volume: 0.018, role: 'windbell' }
+    ],
+    night: [
+      { note: 28, at: 0, duration: 1.6, volume: 0.036, role: 'drone' },
+      { note: 52, at: 0.34, duration: 1.4, volume: 0.018, role: 'beacon' },
+      { note: 76, at: 1.08, duration: 1.0, volume: 0.008, role: 'windbell' }
+    ]
+  };
+
+  motifs[theme].forEach((item) => {
+    scheduleDirectTone({
+      context,
+      note: item.note,
+      startTime: context.currentTime + item.at,
+      duration: item.duration,
+      volume: item.volume,
+      type: 'sine',
+      role: item.role
+    });
+  });
+}
+
 function createBackgroundMusicTheme(config: {
+  style: 'lullaby' | 'chimes' | 'nocturne';
   bpm: number;
   loopBeats: number;
   masterVolume: number;
+  filterFrequency: number;
+  echoDelay: number;
+  echoVolume: number;
   padWave: OscillatorType;
   melodyWave: OscillatorType;
   bassWave: OscillatorType;
@@ -2336,31 +3098,35 @@ function createBackgroundMusicTheme(config: {
   shimmerNotes: number[];
 }): BackgroundMusicTheme {
   return {
+    style: config.style,
     bpm: config.bpm,
     loopBeats: config.loopBeats,
     masterVolume: config.masterVolume,
+    filterFrequency: config.filterFrequency,
+    echoDelay: config.echoDelay,
+    echoVolume: config.echoVolume,
     padWave: config.padWave,
     melodyWave: config.melodyWave,
     bassWave: config.bassWave,
     chords: config.chords.map((notes, index) => ({
       notes,
       beat: index * config.chordBeats,
-      duration: config.chordBeats + 0.65,
+      duration: config.chordBeats + 1.25,
       volume: config.chordVolume
     })),
-    bass: makeBackgroundLine(config.bassNotes, [2, 2], 0, 1.85, config.bassVolume),
-    melody: makeBackgroundLine(config.melodyNotes, [0.75, 0.5, 0.75, 1, 1, 0.5, 0.75, 0.75], 0, 0.86, config.melodyVolume),
-    shimmer: makeBackgroundLine(config.shimmerNotes, [2, 2, 1, 1, 2, 2], 0.35, 0.76, config.shimmerVolume)
+    bass: makeBackgroundLine(config.bassNotes, [4], 0, 1.05, config.bassVolume, config.loopBeats),
+    melody: makeBackgroundLine(config.melodyNotes, [1.5, 1, 1.5, 2, 1.5, 1, 2, 2], 0, 1.08, config.melodyVolume, config.loopBeats),
+    shimmer: makeBackgroundLine(config.shimmerNotes, [4, 2, 2, 4, 4], 0.55, 0.9, config.shimmerVolume, config.loopBeats)
   };
 }
 
-function makeBackgroundLine(notes: number[], rhythm: number[], startBeat: number, sustainRatio: number, volume: number) {
+function makeBackgroundLine(notes: number[], rhythm: number[], startBeat: number, sustainRatio: number, volume: number, loopBeats: number) {
   let beat = startBeat;
   const line: BackgroundNote[] = [];
 
   notes.forEach((note, index) => {
     const step = rhythm[index % rhythm.length];
-    if (note >= 0) {
+    if (note >= 0 && beat < loopBeats) {
       line.push({
         note,
         beat,
@@ -2383,15 +3149,75 @@ function startBackgroundMusic() {
   const context = unlockAudio();
   if (!context) return;
 
+  const themeId = previewTheme.value || settings.value.theme;
+  const audio = new Audio(backgroundAudioSources[themeId]);
+  audio.loop = true;
+  audio.preload = 'auto';
+  audio.volume = 0.0001;
+  bgmAudio = audio;
+  bgmPlaying.value = true;
+  const playResult = audio.play();
+  fadeBackgroundAudio(audio, backgroundAudioVolumes[themeId], 1400);
+
+  if (playResult) {
+    void playResult.catch(() => {
+      if (bgmAudio === audio) {
+        bgmAudio = null;
+        bgmPlaying.value = false;
+        startGeneratedBackgroundMusic();
+      }
+    });
+  }
+}
+
+function startGeneratedBackgroundMusic() {
+  if (!settings.value.soundFeedback || bgmPlaying.value) return;
+  const context = unlockAudio();
+  if (!context) return;
+
   const theme = backgroundMusicThemes[previewTheme.value || settings.value.theme];
   bgmGain = context.createGain();
+  bgmFilter = context.createBiquadFilter();
+  bgmDelay = context.createDelay(1.2);
+  bgmDelayGain = context.createGain();
+  bgmFeedbackGain = context.createGain();
   bgmGain.gain.setValueAtTime(0.0001, context.currentTime);
   bgmGain.gain.exponentialRampToValueAtTime(theme.masterVolume, context.currentTime + 1.4);
-  bgmGain.connect(context.destination);
+  bgmFilter.type = 'lowpass';
+  bgmFilter.frequency.setValueAtTime(theme.filterFrequency, context.currentTime);
+  bgmFilter.Q.setValueAtTime(0.65, context.currentTime);
+  bgmDelay.delayTime.setValueAtTime(theme.echoDelay, context.currentTime);
+  bgmDelayGain.gain.setValueAtTime(theme.echoVolume, context.currentTime);
+  bgmFeedbackGain.gain.setValueAtTime(theme.style === 'chimes' ? 0.22 : theme.style === 'nocturne' ? 0.1 : 0.14, context.currentTime);
+  bgmGain.connect(bgmFilter);
+  bgmFilter.connect(context.destination);
+  bgmFilter.connect(bgmDelay);
+  bgmDelay.connect(bgmDelayGain);
+  bgmDelayGain.connect(bgmFeedbackGain);
+  bgmFeedbackGain.connect(bgmDelay);
+  bgmDelayGain.connect(context.destination);
 
   bgmPlaying.value = true;
   scheduleBackgroundPhrase();
   bgmTimer = window.setInterval(scheduleBackgroundPhrase, Math.round((theme.loopBeats * 60 * 1000) / theme.bpm));
+}
+
+function fadeBackgroundAudio(audio: HTMLAudioElement, targetVolume: number, durationMs: number) {
+  if (bgmAudioFadeTimer) {
+    window.clearInterval(bgmAudioFadeTimer);
+    bgmAudioFadeTimer = undefined;
+  }
+
+  const startedAt = performance.now();
+  const startVolume = audio.volume;
+  bgmAudioFadeTimer = window.setInterval(() => {
+    const progress = Math.min((performance.now() - startedAt) / durationMs, 1);
+    audio.volume = startVolume + (targetVolume - startVolume) * progress;
+    if (progress >= 1 && bgmAudioFadeTimer) {
+      window.clearInterval(bgmAudioFadeTimer);
+      bgmAudioFadeTimer = undefined;
+    }
+  }, 50);
 }
 
 function scheduleBackgroundPhrase() {
@@ -2402,52 +3228,217 @@ function scheduleBackgroundPhrase() {
   const beatSeconds = 60 / theme.bpm;
   const startTime = context.currentTime + 0.12;
 
-  theme.chords.forEach((chord) => {
+  if (theme.style === 'lullaby') {
+    schedulePeachLullaby(context, theme, startTime, beatSeconds);
+    return;
+  }
+
+  if (theme.style === 'chimes') {
+    scheduleMintChimes(context, theme, startTime, beatSeconds);
+    return;
+  }
+
+  scheduleNightNocturne(context, theme, startTime, beatSeconds);
+}
+
+function schedulePeachLullaby(context: AudioContext, theme: BackgroundMusicTheme, startTime: number, beatSeconds: number) {
+  const chords = [
+    { beat: 0, notes: [41, 48, 53, 57] },
+    { beat: 8, notes: [45, 52, 57, 60] },
+    { beat: 16, notes: [46, 53, 58, 62] },
+    { beat: 24, notes: [43, 50, 55, 58] },
+    { beat: 32, notes: [41, 48, 53, 60] },
+    { beat: 40, notes: [48, 55, 60, 64] },
+    { beat: 48, notes: [46, 53, 57, 62] },
+    { beat: 56, notes: [43, 50, 55, 62] },
+    { beat: 64, notes: [41, 48, 53, 57] }
+  ];
+  chords.forEach((chord) => {
     chord.notes.forEach((note, index) => {
       scheduleBackgroundTone({
         context,
         note,
         startTime: startTime + chord.beat * beatSeconds,
-        duration: chord.duration * beatSeconds,
-        volume: chord.volume * (index === 0 ? 0.9 : 1),
-        type: theme.padWave,
-        detune: index % 2 === 0 ? -2 : 2
+        duration: 9.8 * beatSeconds,
+        volume: 0.013 + index * 0.0008,
+        type: index === 0 ? 'sine' : 'triangle',
+        detune: index % 2 === 0 ? -3 : 3,
+        role: 'pad'
       });
     });
   });
 
-  theme.bass.forEach((note) => {
+  const bass = [
+    { beat: 0, note: 29 }, { beat: 8, note: 33 }, { beat: 16, note: 34 }, { beat: 24, note: 31 },
+    { beat: 32, note: 29 }, { beat: 40, note: 36 }, { beat: 48, note: 34 }, { beat: 56, note: 31 }, { beat: 64, note: 29 }
+  ];
+  bass.forEach((item) => {
     scheduleBackgroundTone({
       context,
-      note: note.note,
-      startTime: startTime + note.beat * beatSeconds,
-      duration: note.duration * beatSeconds,
-      volume: note.volume,
-      type: theme.bassWave,
-      detune: -4
-    });
-  });
-
-  theme.melody.forEach((note) => {
-    scheduleBackgroundTone({
-      context,
-      note: note.note,
-      startTime: startTime + note.beat * beatSeconds,
-      duration: note.duration * beatSeconds,
-      volume: note.volume,
-      type: theme.melodyWave
-    });
-  });
-
-  theme.shimmer.forEach((note) => {
-    scheduleBackgroundTone({
-      context,
-      note: note.note,
-      startTime: startTime + note.beat * beatSeconds,
-      duration: note.duration * beatSeconds,
-      volume: note.volume,
+      note: item.note,
+      startTime: startTime + item.beat * beatSeconds,
+      duration: 6.8 * beatSeconds,
+      volume: 0.009,
       type: 'sine',
-      detune: 3
+      detune: -5,
+      role: 'bass'
+    });
+  });
+
+  const melody = [
+    { beat: 3, note: 65, duration: 3.8 }, { beat: 9, note: 64, duration: 3.4 },
+    { beat: 15, note: 60, duration: 4.6 }, { beat: 23, note: 58, duration: 3.6 },
+    { beat: 30, note: 60, duration: 4.2 }, { beat: 37, note: 65, duration: 4.8 },
+    { beat: 45, note: 67, duration: 4.2 }, { beat: 52, note: 64, duration: 5.2 },
+    { beat: 61, note: 60, duration: 6.4 }, { beat: 68, note: 57, duration: 4.2 }
+  ];
+  melody.forEach((item) => {
+    scheduleBackgroundTone({
+      context,
+      note: item.note,
+      startTime: startTime + item.beat * beatSeconds,
+      duration: item.duration * beatSeconds,
+      volume: 0.014,
+      type: theme.melodyWave,
+      role: 'beacon'
+    });
+  });
+
+  const musicBox = [
+    { beat: 1, notes: [65, 69, 72] }, { beat: 9, notes: [64, 69, 72] },
+    { beat: 17, notes: [62, 65, 70] }, { beat: 25, notes: [58, 62, 67] },
+    { beat: 33, notes: [65, 69, 72] }, { beat: 41, notes: [67, 72, 76] },
+    { beat: 49, notes: [62, 65, 70] }, { beat: 57, notes: [62, 67, 74] },
+    { beat: 65, notes: [65, 69, 72] }
+  ];
+  musicBox.forEach((phrase) => {
+    phrase.notes.forEach((note, index) => {
+      scheduleBackgroundTone({
+        context,
+        note,
+        startTime: startTime + (phrase.beat + index * 0.62) * beatSeconds,
+        duration: 1.35 * beatSeconds,
+        volume: 0.009,
+        type: 'triangle',
+        detune: index === 1 ? 3 : -2,
+        role: 'musicbox'
+      });
+    });
+  });
+}
+
+function scheduleMintChimes(context: AudioContext, theme: BackgroundMusicTheme, startTime: number, beatSeconds: number) {
+  const chimes = [
+    74, 78, 81, 86, 83, 81, 78, 76,
+    74, 76, 78, 83, 86, 88, 86, 83,
+    78, 81, 83, 88, 90, 88, 86, 81,
+    76, 78, 81, 83, 81, 78, 76, 74
+  ];
+  chimes.forEach((note, index) => {
+    const beat = index * 1.55 + (index % 4 === 2 ? 0.18 : 0);
+    scheduleBackgroundTone({
+      context,
+      note,
+      startTime: startTime + beat * beatSeconds,
+      duration: 1.05 * beatSeconds,
+      volume: index % 5 === 0 ? 0.011 : 0.008,
+      type: 'sine',
+      detune: index % 2 === 0 ? 10 : -7,
+      role: 'windbell'
+    });
+  });
+
+  const glassPads = [
+    { beat: 0, notes: [50, 57, 62, 66] },
+    { beat: 12, notes: [45, 52, 57, 62] },
+    { beat: 24, notes: [47, 54, 59, 66] },
+    { beat: 36, notes: [42, 50, 57, 62] },
+    { beat: 48, notes: [50, 57, 62, 69] }
+  ];
+  glassPads.forEach((chord) => {
+    chord.notes.forEach((note, index) => {
+      scheduleBackgroundTone({
+        context,
+        note,
+        startTime: startTime + chord.beat * beatSeconds,
+        duration: 8.4 * beatSeconds,
+        volume: 0.0055 + index * 0.0007,
+        type: 'sine',
+        detune: index === 1 ? 11 : -6,
+        role: 'pad'
+      });
+    });
+  });
+
+  const windLine = [
+    { beat: 6, note: 69 }, { beat: 13, note: 74 }, { beat: 21, note: 78 }, { beat: 29, note: 81 },
+    { beat: 38, note: 83 }, { beat: 46, note: 81 }, { beat: 54, note: 78 }, { beat: 61, note: 74 }
+  ];
+  windLine.forEach((item) => {
+    scheduleBackgroundTone({
+      context,
+      note: item.note,
+      startTime: startTime + item.beat * beatSeconds,
+      duration: 3.6 * beatSeconds,
+      volume: 0.009,
+      type: theme.melodyWave,
+      detune: 5,
+      role: 'windbell'
+    });
+  });
+}
+
+function scheduleNightNocturne(context: AudioContext, theme: BackgroundMusicTheme, startTime: number, beatSeconds: number) {
+  const drones = [
+    { beat: 0, notes: [33, 40, 45, 48] },
+    { beat: 16, notes: [31, 38, 43, 47] },
+    { beat: 32, notes: [29, 36, 41, 45] }
+  ];
+  drones.forEach((chord) => {
+    chord.notes.forEach((note, index) => {
+      scheduleBackgroundTone({
+        context,
+        note,
+        startTime: startTime + chord.beat * beatSeconds,
+        duration: 19 * beatSeconds,
+        volume: index === 0 ? 0.017 : 0.008,
+        type: 'sine',
+        detune: index % 2 === 0 ? -7 : 6,
+        role: index === 0 ? 'drone' : 'pad'
+      });
+    });
+  });
+
+  const beacon = [
+    { beat: 5, note: 64, duration: 6.5 }, { beat: 17, note: 67, duration: 5.5 },
+    { beat: 28, note: 69, duration: 7 }, { beat: 40, note: 60, duration: 6 }
+  ];
+  beacon.forEach((item) => {
+    scheduleBackgroundTone({
+      context,
+      note: item.note,
+      startTime: startTime + item.beat * beatSeconds,
+      duration: item.duration * beatSeconds,
+      volume: 0.01,
+      type: theme.melodyWave,
+      detune: -2,
+      role: 'beacon'
+    });
+  });
+
+  const stars = [
+    { beat: 11, note: 76 }, { beat: 25, note: 79 }, { beat: 37, note: 72 }, { beat: 45, note: 81 }
+  ];
+  stars.forEach((item) => {
+    scheduleBackgroundTone({
+      context,
+      note: item.note,
+      startTime: startTime + item.beat * beatSeconds,
+      duration: 3.2 * beatSeconds,
+      volume: 0.0036,
+      type: 'sine',
+      detune: 4,
+      role: 'shimmer'
     });
   });
 }
@@ -2459,7 +3450,8 @@ function scheduleBackgroundTone({
   duration,
   volume,
   type,
-  detune = 0
+  detune = 0,
+  role
 }: {
   context: AudioContext;
   note: number;
@@ -2468,30 +3460,249 @@ function scheduleBackgroundTone({
   volume: number;
   type: OscillatorType;
   detune?: number;
+  role: BackgroundRole;
 }) {
-  const oscillator = context.createOscillator();
+  const frequency = midiToFrequency(note);
+  const oscillators: OscillatorNode[] = [];
+  const filter = context.createBiquadFilter();
   const gain = context.createGain();
-  const attack = Math.min(0.22, duration * 0.28);
-  const release = Math.min(0.5, duration * 0.45);
+  const envelope = getBackgroundEnvelope(role, duration);
+  const attack = envelope.attack;
+  const release = envelope.release;
   const endTime = startTime + duration;
+  const filterSettings = getBackgroundFilterSettings(role, frequency);
+  const chorus = getBackgroundChorus(role);
+  const targetVolume = volume * chorus.gainScale;
 
-  oscillator.type = type;
-  oscillator.frequency.setValueAtTime(midiToFrequency(note), startTime);
-  oscillator.detune.setValueAtTime(detune, startTime);
+  filter.type = filterSettings.type;
+  filter.frequency.setValueAtTime(filterSettings.frequency, startTime);
+  filter.Q.setValueAtTime(filterSettings.q, startTime);
   gain.gain.setValueAtTime(0.0001, startTime);
-  gain.gain.exponentialRampToValueAtTime(volume, startTime + attack);
+  gain.gain.exponentialRampToValueAtTime(targetVolume, startTime + attack);
   gain.gain.setTargetAtTime(0.0001, Math.max(startTime + attack, endTime - release), release / 3);
-  oscillator.connect(gain);
+
+  chorus.layers.forEach((layer) => {
+    const oscillator = context.createOscillator();
+    oscillator.type = layer.type ?? type;
+    oscillator.frequency.setValueAtTime(frequency, startTime);
+    oscillator.detune.setValueAtTime(detune + layer.detune, startTime);
+    oscillator.connect(filter);
+    oscillator.onended = () => {
+      bgmOscillators = bgmOscillators.filter((item) => item !== oscillator);
+    };
+    bgmOscillators.push(oscillator);
+    oscillators.push(oscillator);
+  });
+
+  filter.connect(gain);
   gain.connect(bgmGain as GainNode);
-  oscillator.onended = () => {
-    bgmOscillators = bgmOscillators.filter((item) => item !== oscillator);
+  oscillators.forEach((oscillator) => {
+    oscillator.start(startTime);
+    oscillator.stop(endTime + 0.08);
+  });
+}
+
+function scheduleDirectTone({
+  context,
+  note,
+  startTime,
+  duration,
+  volume,
+  type,
+  role
+}: {
+  context: AudioContext;
+  note: number;
+  startTime: number;
+  duration: number;
+  volume: number;
+  type: OscillatorType;
+  role: BackgroundRole;
+}) {
+  const output = context.createGain();
+  output.gain.value = 0.8;
+  output.connect(context.destination);
+  const previousGain = bgmGain;
+  bgmGain = output;
+  scheduleBackgroundTone({ context, note, startTime, duration, volume, type, role });
+  bgmGain = previousGain;
+  window.setTimeout(() => {
+    try {
+      output.disconnect();
+    } catch {
+      // Output may already be cleaned up by the browser.
+    }
+  }, Math.ceil((startTime - context.currentTime + duration + 0.4) * 1000));
+}
+
+function getBackgroundFilterSettings(role: BackgroundRole, frequency: number) {
+  if (role === 'bass') {
+    return { type: 'lowpass' as BiquadFilterType, frequency: Math.min(760, Math.max(260, frequency * 3.2)), q: 0.45 };
+  }
+  if (role === 'drone') {
+    return { type: 'lowpass' as BiquadFilterType, frequency: Math.min(520, Math.max(180, frequency * 3.1)), q: 0.38 };
+  }
+  if (role === 'pad') {
+    return { type: 'lowpass' as BiquadFilterType, frequency: Math.min(2100, Math.max(950, frequency * 4.4)), q: 0.55 };
+  }
+  if (role === 'musicbox') {
+    return { type: 'bandpass' as BiquadFilterType, frequency: Math.min(4200, Math.max(1500, frequency * 2.2)), q: 1.25 };
+  }
+  if (role === 'windbell') {
+    return { type: 'bandpass' as BiquadFilterType, frequency: Math.min(8200, Math.max(2400, frequency * 1.35)), q: 2.45 };
+  }
+  if (role === 'shimmer') {
+    return { type: 'bandpass' as BiquadFilterType, frequency: Math.min(7800, Math.max(2600, frequency)), q: 1.6 };
+  }
+  if (role === 'beacon') {
+    return { type: 'lowpass' as BiquadFilterType, frequency: Math.min(2400, Math.max(900, frequency * 3.6)), q: 0.5 };
+  }
+  return { type: 'lowpass' as BiquadFilterType, frequency: Math.min(3600, Math.max(1400, frequency * 4.8)), q: 0.72 };
+}
+
+function getBackgroundChorus(role: BackgroundRole) {
+  if (role === 'pad') {
+    return {
+      gainScale: 0.58,
+      layers: [
+        { detune: -7, type: 'sine' as OscillatorType },
+        { detune: 6, type: 'triangle' as OscillatorType }
+      ]
+    };
+  }
+  if (role === 'drone') {
+    return {
+      gainScale: 0.72,
+      layers: [
+        { detune: -9, type: 'sine' as OscillatorType },
+        { detune: 8, type: 'sine' as OscillatorType },
+        { detune: 1, type: 'triangle' as OscillatorType }
+      ]
+    };
+  }
+  if (role === 'melody') {
+    return {
+      gainScale: 0.74,
+      layers: [
+        { detune: -3 },
+        { detune: 4, type: 'triangle' as OscillatorType }
+      ]
+    };
+  }
+  if (role === 'beacon') {
+    return {
+      gainScale: 0.64,
+      layers: [
+        { detune: -5, type: 'sine' as OscillatorType },
+        { detune: 6, type: 'triangle' as OscillatorType }
+      ]
+    };
+  }
+  if (role === 'musicbox') {
+    return {
+      gainScale: 0.52,
+      layers: [
+        { detune: -4, type: 'triangle' as OscillatorType },
+        { detune: 5, type: 'sine' as OscillatorType }
+      ]
+    };
+  }
+  if (role === 'windbell') {
+    return {
+      gainScale: 0.46,
+      layers: [
+        { detune: -16, type: 'sine' as OscillatorType },
+        { detune: 14, type: 'sine' as OscillatorType },
+        { detune: 3, type: 'triangle' as OscillatorType }
+      ]
+    };
+  }
+  if (role === 'shimmer') {
+    return {
+      gainScale: 0.66,
+      layers: [
+        { detune: -10 },
+        { detune: 12 }
+      ]
+    };
+  }
+  return {
+    gainScale: 0.88,
+    layers: [{ detune: 0 }]
   };
-  bgmOscillators.push(oscillator);
-  oscillator.start(startTime);
-  oscillator.stop(endTime + 0.08);
+}
+
+function getBackgroundEnvelope(role: BackgroundRole, duration: number) {
+  if (role === 'pad') {
+    return {
+      attack: Math.min(1.4, duration * 0.38),
+      release: Math.min(2.1, duration * 0.55)
+    };
+  }
+  if (role === 'drone') {
+    return {
+      attack: Math.min(3.8, duration * 0.42),
+      release: Math.min(4.6, duration * 0.62)
+    };
+  }
+  if (role === 'bass') {
+    return {
+      attack: Math.min(0.42, duration * 0.24),
+      release: Math.min(1.0, duration * 0.42)
+    };
+  }
+  if (role === 'musicbox') {
+    return {
+      attack: Math.min(0.035, duration * 0.12),
+      release: Math.min(1.25, duration * 0.88)
+    };
+  }
+  if (role === 'windbell') {
+    return {
+      attack: Math.min(0.025, duration * 0.12),
+      release: Math.min(2.2, duration * 0.92)
+    };
+  }
+  if (role === 'beacon') {
+    return {
+      attack: Math.min(1.1, duration * 0.34),
+      release: Math.min(2.8, duration * 0.64)
+    };
+  }
+  if (role === 'shimmer') {
+    return {
+      attack: Math.min(0.7, duration * 0.36),
+      release: Math.min(1.5, duration * 0.62)
+    };
+  }
+  return {
+    attack: Math.min(0.34, duration * 0.28),
+    release: Math.min(1.15, duration * 0.58)
+  };
 }
 
 function stopBackgroundMusic() {
+  if (themeStingerAudio) {
+    themeStingerAudio.pause();
+    themeStingerAudio.currentTime = 0;
+    themeStingerAudio.src = '';
+    themeStingerAudio.load();
+    themeStingerAudio = null;
+  }
+
+  if (bgmAudioFadeTimer) {
+    window.clearInterval(bgmAudioFadeTimer);
+    bgmAudioFadeTimer = undefined;
+  }
+
+  if (bgmAudio) {
+    bgmAudio.pause();
+    bgmAudio.currentTime = 0;
+    bgmAudio.src = '';
+    bgmAudio.load();
+    bgmAudio = null;
+  }
+
   if (bgmTimer) {
     window.clearInterval(bgmTimer);
     bgmTimer = undefined;
@@ -2511,6 +3722,17 @@ function stopBackgroundMusic() {
     }
   });
   bgmOscillators = [];
+  [bgmFeedbackGain, bgmDelayGain, bgmDelay, bgmFilter, bgmGain].forEach((node) => {
+    try {
+      node?.disconnect();
+    } catch {
+      // Nodes may already be disconnected during a theme restart.
+    }
+  });
+  bgmFeedbackGain = null;
+  bgmDelayGain = null;
+  bgmDelay = null;
+  bgmFilter = null;
   bgmGain = null;
   bgmPlaying.value = false;
 }
@@ -2617,10 +3839,11 @@ provide(appViewContextKey, {
   activeJourneyProgress, activeJourneyScheduleSections, activeJourneyTrip, activeJourneyTripId,
   activeTab, activeTabIndex, addCustomSecretCode, addDays,
   addJourneyDay,
-  addJourneyEntry, addMemoryPhotos, addMoodHistory, addWish,
+  addJourneyEntry, addMemoryPhotos, addMoodHistory, addPeriodRecord, addWish,
   applyImportData, appUnlocked, arrivalReadyPercent, arrivalSteps,
   autoScheduleActiveJourney, backgroundBeams, backgroundMotes, BOY_NAME,
   burstParticles, cancelImportData, cancelSecretPress, capsuleShowAll,
+  cancelEditPeriodRecord,
   checkedInToday, checkForAppUpdate, checkins, checkinStreak,
   checkInToday, chooseRadar, clearDailyAnswer, clearDailyMessage,
   closenessLabel, cloudLoadingActive, cloudLoadingSteps, cloudStatus,
@@ -2630,6 +3853,7 @@ provide(appViewContextKey, {
   dailyAnswer, dailyMessage, dailyQuestions, dailyReceipt,
   dateKey, daysUntilMeeting, dismissOnboarding, dismissUpdateToast,
   displayBoyName, displayGirlName, draftStartDate, draftTargetDate,
+  editingPeriodRecordId,
   drawFortune, endPlaneDrag, enterUnlockedApp, exportActiveJourneyCalendar,
   exportData, exportMeetingCalendar, finishOpening, flippedCapsules,
   flipUnits, formatDateKey, formatJourneyDateLabel, fortuneDeck, fortuneLine, fortuneReady,
@@ -2652,18 +3876,29 @@ provide(appViewContextKey, {
   meetingChecklist, meetingChecklistItems, meetingChecklistProgress, meetingMomentItems,
   meetingMoments, meetingSummary, meetingSummaryLine, memoryPhotos,
   milestoneFlash, moodBottleDots, moodHistory, moodOptions,
-  movePlaneDrag, navIndicatorStyle, newSecretCode, newWish,
+  movePlaneDrag, navIndicatorStyle, newPeriodCare, newPeriodEndDate,
+  newPeriodFlow, newPeriodMoods, newPeriodNote, newPeriodPainLevel,
+  newPeriodStartDate, newPeriodSymptoms, newSecretCode, newWish,
   now, onboardingSteps, onboardingVisible, openingChapters,
   openingStars, openingThemeLabel, openThemeSettings, openTodayRitual,
   packingItems, parseJourneyRowsFromImage, parseJourneyRowsFromSpreadsheetFile, passwordBusy,
   passwordInput, passwordStatus, passwordSuccess, pendingImport,
   pendingImportSummary, photoFilmstrip, planeDrag, planeStyle,
+  periodAnomalyAlerts, periodCalendarOffset, periodCalendarRangeLabel,
+  periodCareOptions, periodCareSuggestionCards, periodConfidenceLabel, periodCycleStats, periodDisplayName,
+  periodPrivacyMode, periodRecordFormTitle, periodRecordSubmitLabel, periodReminderCards,
+  periodFlowOptions, periodMessage, periodMoodOptions, periodName, periodPredictions,
+  periodRecords, periodStatusLabel, periodSummaryCards, periodSymptomOptions,
+  periodTimelineRecords, professionalNextPeriodPrediction, professionalPeriodCalendarDays,
+  professionalPeriodInsightCards, professionalPeriodPhase, professionalPeriodPredictions,
+  professionalPeriodSummaryCards, professionalPeriodTimelineRecords, periodTrendRows,
   planeTrailStyle, playSoftSound, preparationStats, previewTheme,
   previewThemeSelection, progress, progressPercent, pwaInstallGuide,
   radarChoiceId, radarChoiceResult, radarChoices, radarResult,
   radarScanned, rawDayIndex, refreshForUpdate, reloadPersistentState,
   removeCustomSecretCode, removeJourneyDay, removeJourneyEntry, removeJourneyTrip,
-  removeMemoryPhoto, removeWish, requestCloudSync, requestFinishOpening,
+  removeMemoryPhoto, removePeriodRecord, removeWish, requestCloudSync, requestFinishOpening,
+  resetPeriodCalendar,
   resetSettings, resetToday, restoreSavedCloudSession, revealSecret,
   ritualComplete, ritualOpened, ritualProgress, ritualSteps,
   routeFillStyle, saveDailyAnswer, saveDailyMessage, savedMessageLine,
@@ -2674,14 +3909,14 @@ provide(appViewContextKey, {
   selectedMoodLine, selectJourneyDay, selectJourneyTrip, selectJourneyTripFromEvent,
   selectMood, setSettingsUpdatedAt, settings, settingsDraft,
   shareCopied, showPasswordInstallHint, sparkles, startCloudSyncLoop,
-  startDateLabel, startOpeningSequence, startPlaneDrag, startSecretPress,
+  shiftPeriodCalendar, startDateLabel, startEditPeriodRecord, startOpeningSequence, startPlaneDrag, startSecretPress,
   suitcaseChecked, suitcaseItems, suitcaseProgress, syncCloudNow,
   targetDate, targetDateLabel, targetDateShortLabel, targetDayStart,
   targetOffsetDays, targetOffsetMax, targetTimelineStyle, taskCompleted,
   theaterLights, themeClass, themeOptions, themePreviewing,
   themeTransition, timelineEvents, timelineProgressStyle, todayJourney,
   todayNote, todayQuestion, todayStart, todayTask,
-  toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment,
+  toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment, togglePeriodPrivacyMode, togglePeriodSelection,
   toggleSuitcaseItem, toggleTask, toggleWish, triggerMilestoneWave,
   unlockApp, unlockedCount, unlockSecretCode, updateActiveJourneyTitle,
   updateAppThemeChrome, updateInstalledDisplayMode, updateJourneyDayField, updateJourneyEntryField,
@@ -2708,6 +3943,7 @@ provide(appViewContextKey, {
       <CountdownView v-if="activeTab === 'countdown'" />
       <TodayView v-else-if="activeTab === 'today'" />
       <JourneyView v-else-if="activeTab === 'journey'" />
+      <PeriodView v-else-if="activeTab === 'period'" />
       <MemoriesView v-else-if="activeTab === 'memories'" />
       <PrepareView v-else-if="activeTab === 'prepare'" />
       <BottomNav />

@@ -93,6 +93,19 @@ export type WishItem = {
   createdAt: string;
 };
 
+export type PeriodRecord = {
+  id: string;
+  startDate: string;
+  endDate: string;
+  flow: 'spotting' | 'light' | 'medium' | 'heavy' | '';
+  painLevel: number;
+  symptoms: string[];
+  moods: string[];
+  care: string[];
+  note: string;
+  createdAt: string;
+};
+
 export type MeetingMoment = {
   id: string;
   label: string;
@@ -153,4 +166,4 @@ export type JourneyTrip = {
   days: JourneyPlanDay[];
 };
 
-export type ActiveTab = 'countdown' | 'today' | 'journey' | 'memories' | 'prepare';
+export type ActiveTab = 'countdown' | 'today' | 'journey' | 'period' | 'memories' | 'prepare';
