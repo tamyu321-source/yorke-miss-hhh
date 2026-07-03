@@ -89,4 +89,36 @@ export type MeetingMoment = {
   label: string;
 };
 
-export type ActiveTab = 'countdown' | 'today' | 'memories' | 'prepare';
+export type JourneyEntry = {
+  id: string;
+  time: string;
+  city: string;
+  plan: string;
+  stay: string;
+  transport: string;
+  duration: string;
+  note: string;
+  done: boolean;
+};
+
+export type JourneyPlanDay = {
+  id: string;
+  dayLabel: string;
+  date: string;
+  city: string;
+  stay: string;
+  entries: JourneyEntry[];
+};
+
+export type JourneyTrip = {
+  id: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceName: string;
+  days: JourneyPlanDay[];
+};
+
+export type ActiveTab = 'countdown' | 'today' | 'journey' | 'memories' | 'prepare';

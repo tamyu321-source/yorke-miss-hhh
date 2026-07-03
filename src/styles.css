@@ -1,6 +1,7 @@
 :root {
   color: #243047;
-  background: #fff7f2;
+  --app-page-background: #fff7f2;
+  background: var(--app-page-background);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Microsoft YaHei", "PingFang SC", sans-serif;
@@ -15,16 +16,14 @@
 
 html {
   min-height: 100%;
-  background: #fff7f2;
+  background: var(--app-page-background);
 }
 
 body {
   min-width: 320px;
   min-height: 100svh;
   margin: 0;
-  background:
-    linear-gradient(155deg, rgba(255, 247, 242, 0.98) 0%, rgba(234, 247, 247, 0.94) 54%, rgba(255, 241, 236, 0.98) 100%),
-    #fff7f2;
+  background: var(--app-page-background);
 }
 
 button {
@@ -1065,10 +1064,79 @@ button {
   animation-name: mint-flow-glow;
 }
 
+.app-shell.theme-mint .travel-board-section {
+  --travel-accent: #417c73;
+  --travel-accent-strong: #2f6861;
+  --travel-accent-soft: rgba(134, 212, 189, 0.18);
+  --travel-check-bg: rgba(143, 211, 224, 0.32);
+  --travel-check-color: #1f4d4a;
+  --travel-ink: #1f4d4a;
+  --travel-line: rgba(65, 124, 115, 0.12);
+  --travel-muted: #526f70;
+  --travel-panel: rgba(234, 247, 247, 0.72);
+  --travel-ring-center: #eaf7f7;
+  --travel-ring-fill: #417c73;
+  --travel-ring-track: rgba(65, 124, 115, 0.12);
+  --travel-surface: #f8fffd;
+}
+
+.app-shell.theme-mint .travel-progress-ring {
+  background:
+    radial-gradient(circle at center, var(--travel-ring-center) 0 56%, transparent 57%),
+    conic-gradient(var(--travel-ring-fill) var(--travel-progress), var(--travel-ring-track) 0);
+}
+
+.app-shell.theme-mint .travel-check {
+  background: var(--travel-check-bg);
+  color: var(--travel-check-color);
+}
+
+.app-shell.theme-mint .travel-event.done .travel-check {
+  background: var(--travel-accent);
+  color: #fffaf7;
+}
+
+.app-shell.theme-mint .travel-calendar-grid button.active,
+.app-shell.theme-mint .travel-event.done {
+  background: rgba(134, 212, 189, 0.18);
+}
+
 .app-shell.theme-peach .progress-fill,
 .app-shell.theme-peach .prep-track span,
 .app-shell.theme-peach .timeline-track span {
   animation-name: peach-glow;
+}
+
+.app-shell.theme-peach .travel-board-section {
+  --travel-accent: #d97874;
+  --travel-accent-strong: #9e5856;
+  --travel-accent-soft: rgba(246, 166, 161, 0.18);
+  --travel-check-bg: rgba(249, 216, 215, 0.9);
+  --travel-check-color: #4b3442;
+  --travel-ink: #4b3442;
+  --travel-line: rgba(246, 166, 161, 0.18);
+  --travel-muted: #7d6570;
+  --travel-panel: rgba(255, 247, 242, 0.76);
+  --travel-ring-center: #fff7f2;
+  --travel-ring-fill: #f6a6a1;
+  --travel-ring-track: rgba(246, 166, 161, 0.16);
+  --travel-surface: #fffaf7;
+}
+
+.app-shell.theme-peach .travel-progress-ring {
+  background:
+    radial-gradient(circle at center, var(--travel-ring-center) 0 56%, transparent 57%),
+    conic-gradient(var(--travel-ring-fill) var(--travel-progress), var(--travel-ring-track) 0);
+}
+
+.app-shell.theme-peach .travel-check {
+  background: var(--travel-check-bg);
+  color: var(--travel-check-color);
+}
+
+.app-shell.theme-peach .travel-event.done .travel-check {
+  background: var(--travel-accent);
+  color: #fffaf7;
 }
 
 .app-shell.theme-peach .soft-button::after,
@@ -1100,6 +1168,22 @@ button {
   --night-gold: #e4c06a;
 }
 
+.app-shell.theme-night .travel-board-section {
+  --travel-accent: var(--night-teal);
+  --travel-accent-strong: var(--night-cyan);
+  --travel-accent-soft: rgba(120, 200, 181, 0.14);
+  --travel-check-bg: rgba(143, 211, 224, 0.16);
+  --travel-check-color: var(--night-text);
+  --travel-ink: var(--night-text);
+  --travel-line: var(--night-line);
+  --travel-muted: var(--night-muted);
+  --travel-panel: rgba(42, 55, 82, 0.82);
+  --travel-ring-center: rgba(20, 28, 46, 0.96);
+  --travel-ring-fill: var(--night-cyan);
+  --travel-ring-track: rgba(143, 211, 224, 0.14);
+  --travel-surface: rgba(32, 44, 70, 0.92);
+}
+
 .app-shell.theme-night .hero-section,
 .app-shell.theme-night .flight-section,
 .app-shell.theme-night .task-section,
@@ -1123,6 +1207,7 @@ button {
 .app-shell.theme-night .settings-section,
 .app-shell.theme-night .wish-section,
 .app-shell.theme-night .meeting-plan-section,
+.app-shell.theme-night .travel-board-section,
 .app-shell.theme-night .journey-summary-section,
 .app-shell.theme-night .radar-section,
 .app-shell.theme-night .capsule-section {
@@ -1210,6 +1295,21 @@ button {
 .app-shell.theme-night .date-timeline-control,
 .app-shell.theme-night .wish-list article,
 .app-shell.theme-night .meeting-moment,
+.app-shell.theme-night .travel-trip-row select,
+.app-shell.theme-night .travel-mode-switch,
+.app-shell.theme-night .travel-mode-switch button.active,
+.app-shell.theme-night .travel-stat-grid article,
+.app-shell.theme-night .travel-calendar-card,
+.app-shell.theme-night .travel-calendar-grid button,
+.app-shell.theme-night .travel-day-panel,
+.app-shell.theme-night .travel-day-fields input,
+.app-shell.theme-night .travel-event,
+.app-shell.theme-night .travel-event-time input,
+.app-shell.theme-night .travel-event-body input,
+.app-shell.theme-night .travel-event-body textarea,
+.app-shell.theme-night .travel-import-panel,
+.app-shell.theme-night .travel-import-textarea,
+.app-shell.theme-night .travel-create-row input,
 .app-shell.theme-night .timeline-card,
 .app-shell.theme-night .prep-meter,
 .app-shell.theme-night .suitcase-item,
@@ -1233,7 +1333,8 @@ button {
 .app-shell.theme-night .mood-button span,
 .app-shell.theme-night .date-pill,
 .app-shell.theme-night .capsule-index,
-.app-shell.theme-night .checkmark {
+.app-shell.theme-night .checkmark,
+.app-shell.theme-night .travel-check {
   background: rgba(143, 211, 224, 0.16);
   color: var(--night-text);
 }
@@ -1242,6 +1343,8 @@ button {
 .app-shell.theme-night .timeline-card.active,
 .app-shell.theme-night .wish-list article.done,
 .app-shell.theme-night .meeting-moment.done,
+.app-shell.theme-night .travel-calendar-grid button.active,
+.app-shell.theme-night .travel-event.done,
 .app-shell.theme-night .suitcase-item.packed,
 .app-shell.theme-night .meeting-item.done {
   background: rgba(120, 200, 181, 0.14);
@@ -1256,6 +1359,14 @@ button {
 .app-shell.theme-night .summary-grid strong,
 .app-shell.theme-night .import-preview p,
 .app-shell.theme-night .wish-list p,
+.app-shell.theme-night .travel-hero p,
+.app-shell.theme-night .travel-import-help,
+.app-shell.theme-night .travel-stat-grid strong,
+.app-shell.theme-night .travel-calendar-head strong,
+.app-shell.theme-night .travel-day-panel-head h3,
+.app-shell.theme-night .travel-event-time input,
+.app-shell.theme-night .travel-event-body input,
+.app-shell.theme-night .travel-event-body textarea,
 .app-shell.theme-night .timeline-card p,
 .app-shell.theme-night .daily-receipt pre,
 .app-shell.theme-night .offline-cosmos p,
@@ -1285,11 +1396,31 @@ button {
 .app-shell.theme-night .calendar-button,
 .app-shell.theme-night .wide-soft-button.completed,
 .app-shell.theme-night .task-button.completed,
+.app-shell.theme-night .travel-event.done .travel-check,
 .app-shell.theme-night .suitcase-item.packed span,
 .app-shell.theme-night .meeting-item.done span,
 .app-shell.theme-night .wish-list article.done button:first-child {
   background: var(--night-teal);
   color: #0f1928;
+}
+
+.app-shell.theme-night .travel-progress-ring {
+  background:
+    radial-gradient(circle at center, rgba(20, 28, 46, 0.96) 0 56%, transparent 57%),
+    conic-gradient(var(--night-cyan) var(--travel-progress), rgba(143, 211, 224, 0.14) 0);
+  box-shadow: 0 14px 30px rgba(8, 14, 28, 0.34), inset 0 0 0 1px rgba(143, 211, 224, 0.1);
+}
+
+.app-shell.theme-night .travel-progress-ring strong,
+.app-shell.theme-night .travel-progress-ring span {
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .travel-calendar-grid i,
+.app-shell.theme-night .travel-calendar-head small,
+.app-shell.theme-night .travel-day-panel-head > span {
+  background: rgba(143, 211, 224, 0.14);
+  color: var(--night-text);
 }
 
 .app-shell.theme-night .bottom-nav {
@@ -1304,6 +1435,45 @@ button {
 .app-shell.theme-night .bottom-nav button.active {
   background: linear-gradient(135deg, var(--night-cyan), var(--night-teal));
   color: #0f1928;
+}
+
+@media (max-width: 440px) {
+  .travel-day-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event-time {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .travel-event-time::after {
+    display: none;
+  }
+
+  .travel-calendar-grid em {
+    display: none;
+  }
+
+  .travel-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-actions .soft-button,
+  .travel-actions .ghost-button,
+  .travel-actions .wide-soft-button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 0;
+  }
 }
 
 .app-shell.theme-night .theme-discovery,
@@ -2688,6 +2858,439 @@ button {
   background: #6d7fc6;
 }
 
+.travel-board-section {
+  --travel-accent: #d97874;
+  --travel-accent-strong: #9e5856;
+  --travel-accent-soft: rgba(246, 166, 161, 0.18);
+  --travel-check-bg: rgba(249, 216, 215, 0.9);
+  --travel-check-color: #4b3442;
+  --travel-ink: #243047;
+  --travel-line: rgba(36, 48, 71, 0.08);
+  --travel-muted: #526174;
+  --travel-panel: rgba(255, 250, 247, 0.72);
+  --travel-ring-center: #fff7f2;
+  --travel-ring-fill: #f6a6a1;
+  --travel-ring-track: rgba(246, 166, 161, 0.16);
+  --travel-surface: #fffaf7;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 18px;
+  background:
+    radial-gradient(circle at 88% 12%, rgba(246, 200, 111, 0.18), transparent 84px),
+    radial-gradient(circle at 10% 96%, rgba(143, 211, 224, 0.2), transparent 92px),
+    rgba(255, 250, 247, 0.84);
+}
+
+.travel-hero {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.travel-hero h2 {
+  margin: 5px 0 6px;
+  color: var(--travel-ink);
+  font-size: 1.45rem;
+  line-height: 1.18;
+}
+
+.travel-hero p,
+.travel-import-help {
+  margin: 0;
+  color: var(--travel-muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.travel-progress-ring {
+  display: grid;
+  width: 78px;
+  height: 78px;
+  place-items: center;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, var(--travel-ring-center) 0 56%, transparent 57%),
+    conic-gradient(var(--travel-ring-fill) var(--travel-progress), var(--travel-ring-track) 0);
+  box-shadow: 0 14px 28px rgba(36, 48, 71, 0.12);
+}
+
+.travel-progress-ring strong {
+  margin-top: 13px;
+  color: var(--travel-ink);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.travel-progress-ring span {
+  margin-top: -18px;
+  color: var(--travel-muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.travel-trip-row,
+.travel-import-actions,
+.travel-create-row,
+.travel-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.travel-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.travel-trip-row select,
+.travel-create-row input,
+.travel-day-fields input,
+.travel-event-time input,
+.travel-event-body input,
+.travel-event-body textarea,
+.travel-import-textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--travel-line);
+  border-radius: 14px;
+  background: var(--travel-surface);
+  color: var(--travel-ink);
+  font: inherit;
+  font-weight: 780;
+  outline: none;
+}
+
+.travel-trip-row select,
+.travel-create-row input,
+.travel-day-fields input,
+.travel-event-time input,
+.travel-event-body input {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.travel-import-textarea,
+.travel-event-body textarea {
+  min-height: 86px;
+  padding: 11px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.travel-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border-radius: 18px;
+  background: rgba(36, 48, 71, 0.07);
+}
+
+.travel-mode-switch button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--travel-muted);
+  font-weight: 900;
+}
+
+.travel-mode-switch button.active {
+  background: var(--travel-surface);
+  color: var(--travel-ink);
+  box-shadow: 0 10px 24px rgba(36, 48, 71, 0.1);
+}
+
+.travel-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.travel-stat-grid article {
+  display: grid;
+  gap: 4px;
+  min-height: 62px;
+  align-content: center;
+  padding: 10px;
+  border: 1px solid var(--travel-line);
+  border-radius: 16px;
+  background: var(--travel-panel);
+}
+
+.travel-stat-grid span,
+.travel-calendar-head span,
+.travel-calendar-head small,
+.travel-day-fields label {
+  color: var(--travel-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.travel-stat-grid strong {
+  color: var(--travel-ink);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.travel-calendar-card,
+.travel-day-panel,
+.travel-import-panel {
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--travel-line);
+  border-radius: 18px;
+  background: var(--travel-panel);
+}
+
+.travel-calendar-head,
+.travel-day-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.travel-calendar-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.travel-calendar-head strong,
+.travel-day-panel-head h3 {
+  color: var(--travel-ink);
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.travel-calendar-head small,
+.travel-day-panel-head > span {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: var(--travel-accent-soft);
+  color: var(--travel-muted);
+}
+
+.travel-weekdays,
+.travel-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.travel-weekdays span {
+  color: var(--travel-muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.travel-calendar-grid button {
+  display: grid;
+  gap: 3px;
+  min-height: 68px;
+  align-content: start;
+  border: 1px solid var(--travel-line);
+  border-radius: 12px;
+  background: var(--travel-surface);
+  color: var(--travel-ink);
+  padding: 8px 6px;
+  text-align: left;
+}
+
+.travel-calendar-grid button.blank {
+  visibility: hidden;
+}
+
+.travel-calendar-grid button.active {
+  border-color: var(--travel-accent);
+  background: var(--travel-accent-soft);
+  box-shadow: 0 12px 24px rgba(65, 124, 115, 0.13);
+}
+
+.travel-calendar-grid button.today {
+  outline: 2px solid rgba(246, 200, 111, 0.56);
+  outline-offset: -2px;
+}
+
+.travel-calendar-grid span {
+  font-size: 0.98rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.travel-calendar-grid strong,
+.travel-calendar-grid em,
+.travel-calendar-grid i {
+  overflow: hidden;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.travel-calendar-grid em {
+  color: var(--travel-muted);
+}
+
+.travel-calendar-grid i {
+  justify-self: start;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--travel-accent-soft);
+  color: var(--travel-muted);
+}
+
+.travel-day-panel-head h3,
+.travel-day-panel-head p {
+  margin: 0;
+}
+
+.travel-day-panel-head > span {
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.travel-day-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.travel-day-fields label {
+  display: grid;
+  gap: 5px;
+}
+
+.travel-schedule-sections {
+  display: grid;
+  gap: 12px;
+}
+
+.travel-schedule-section {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--travel-line);
+  border-radius: 16px;
+  background: var(--travel-panel);
+}
+
+.travel-schedule-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.travel-schedule-heading span {
+  color: var(--travel-ink);
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.travel-schedule-heading small {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--travel-accent-soft);
+  color: var(--travel-muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.travel-timeline {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.travel-event {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--travel-line);
+  border-radius: 16px;
+  background: var(--travel-surface);
+}
+
+.travel-event.done {
+  background: var(--travel-accent-soft);
+}
+
+.travel-event-time {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.travel-event-time::after {
+  position: absolute;
+  top: 82px;
+  bottom: 4px;
+  left: 50%;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--travel-accent-soft);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.travel-check {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  justify-self: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--travel-check-bg);
+  color: var(--travel-check-color);
+  font-weight: 950;
+}
+
+.travel-event.done .travel-check {
+  background: var(--travel-accent);
+  color: #fffaf7;
+}
+
+.travel-event-body {
+  display: grid;
+  gap: 8px;
+}
+
+.travel-event-title {
+  font-size: 1rem;
+}
+
+.travel-event-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.travel-remove-entry {
+  justify-self: end;
+  min-height: 34px;
+}
+
+.travel-import-actions .import-button,
+.travel-import-actions .soft-button {
+  width: 100%;
+}
+
 .import-preview {
   display: grid;
   gap: 10px;
@@ -2702,6 +3305,39 @@ button {
   color: #3f4c63;
   font-weight: 750;
   line-height: 1.45;
+}
+
+@media (max-width: 440px) {
+  .travel-day-fields,
+  .travel-event-meta,
+  .travel-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event-time {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .travel-event-time::after {
+    display: none;
+  }
+
+  .travel-calendar-grid em {
+    display: none;
+  }
+
+  .travel-actions .soft-button,
+  .travel-actions .ghost-button,
+  .travel-actions .wide-soft-button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 0;
+  }
 }
 
 .import-mode-row {
@@ -3392,7 +4028,7 @@ button {
   left: max(14px, calc((100vw - 440px) / 2 + 14px));
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   padding: 8px;
   border: 1px solid rgba(36, 48, 71, 0.08);
@@ -3407,7 +4043,7 @@ button {
   top: 8px;
   bottom: 8px;
   left: 8px;
-  width: calc((100% - 16px) / 4);
+  width: calc((100% - 16px) / 5);
   border-radius: 16px;
   background: linear-gradient(135deg, #243047, #526174);
   box-shadow: 0 12px 28px rgba(36, 48, 71, 0.2);
@@ -3662,6 +4298,7 @@ button {
   .settings-section,
   .wish-section,
   .meeting-plan-section,
+  .travel-board-section,
   .journey-summary-section,
   .radar-section,
   .capsule-section {
@@ -3687,12 +4324,57 @@ button {
   .radar-choices,
   .photo-grid,
   .data-actions,
+  .travel-trip-row,
+  .travel-import-actions,
+  .travel-create-row,
+  .travel-actions,
+  .travel-day-fields,
+  .travel-event-meta,
   .summary-grid,
   .settings-grid,
   .theme-picker,
   .settings-actions,
   .wish-input-row {
     grid-template-columns: 1fr;
+  }
+
+  .travel-hero,
+  .travel-event {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .travel-calendar-grid {
+    gap: 4px;
+  }
+
+  .travel-calendar-grid button {
+    min-height: 56px;
+    padding: 6px 4px;
+  }
+
+  .travel-calendar-grid em {
+    display: none;
+  }
+
+  .travel-progress-ring {
+    justify-self: start;
+  }
+
+  .travel-event-time {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .travel-event-time::after {
+    display: none;
+  }
+
+  .travel-remove-entry {
+    justify-self: stretch;
   }
 
   .arrival-mode-section,

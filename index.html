@@ -12,6 +12,27 @@
     <link rel="icon" href="%BASE_URL%icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <title>第一次見面倒數</title>
+    <script>
+      (() => {
+        const chromeColors = {
+          peach: '#fff7f2',
+          mint: '#eaf7f7',
+          night: '#111a2d'
+        };
+        try {
+          const settings = JSON.parse(localStorage.getItem('first-meeting:settings') || '{}');
+          const color = chromeColors[settings.theme] || chromeColors.peach;
+          const themeColor = document.querySelector('meta[name="theme-color"]');
+          if (themeColor) themeColor.setAttribute('content', color);
+          document.documentElement.style.setProperty('--app-page-background', color);
+          document.documentElement.style.background = color;
+          document.body?.style.setProperty('background', color);
+        } catch {
+          document.documentElement.style.setProperty('--app-page-background', chromeColors.peach);
+          document.documentElement.style.background = chromeColors.peach;
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

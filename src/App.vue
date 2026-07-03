@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { createWorker } from 'tesseract.js';
+import * as XLSX from 'xlsx';
 import { createExportData, downloadJsonBackup, parseImportData, type AppExportData } from './backup';
 import { downloadCalendar } from './calendar';
 import {
@@ -19,7 +21,10 @@ import type {
   Countdown,
   DailyQuestion,
   Fortune,
+  JourneyEntry,
   JourneyDay,
+  JourneyPlanDay,
+  JourneyTrip,
   MeetingMoment,
   MemoryPhoto,
   MoodOption,
@@ -40,6 +45,27 @@ type BurstParticle = {
   delay: string;
 };
 
+type JourneyEditableEntryField = 'time' | 'city' | 'plan' | 'stay' | 'transport' | 'duration' | 'note';
+
+type JourneyImportRow = {
+  dayLabel: string;
+  date: string;
+  city: string;
+  plan: string;
+  stay: string;
+  transport: string;
+  duration: string;
+  note: string;
+};
+
+type JourneyPanelMode = 'schedule' | 'import';
+type JourneyScheduleSection = {
+  id: string;
+  label: string;
+  caption: string;
+  entries: JourneyEntry[];
+};
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const OPENING_DURATION_MS = 6400;
 const OPENING_RETURN_DURATION_MS = 4600;
@@ -50,6 +76,27 @@ const THEME_CHROME_COLORS: Record<ThemeId, { color: string; background: string; 
   peach: { color: '#f9d8d7', background: '#fff7f2', statusBar: 'black-translucent' },
   mint: { color: '#dff4ef', background: '#eaf7f7', statusBar: 'black-translucent' },
   night: { color: '#111a2d', background: '#111a2d', statusBar: 'black-translucent' }
+};
+const JOURNEY_IMPORT_HEADERS = ['day', '日期', '城市', '行程安排', '住宿', '交通工具', '車程/時間', '備註'];
+const JOURNEY_COLUMN_ALIASES: Record<keyof JourneyImportRow, string[]> = {
+  dayLabel: ['day', '天數', '天', 'day 1', '日期序'],
+  date: ['日期', 'date', '出發日', '時間'],
+  city: ['城市', 'city', '地點', '區域', '目的地'],
+  plan: ['行程安排', '行程', '安排', '景點', '活動', 'itinerary', 'plan'],
+  stay: ['住宿', '飯店', '酒店', 'hotel', 'stay'],
+  transport: ['交通工具', '交通', 'transport', '移動方式'],
+  duration: ['車程/時間', '車程', '時間', 'duration', '路程'],
+  note: ['備註', 'note', 'notes', '提醒', '補充']
+};
+const emptyJourneyDraftRow: JourneyImportRow = {
+  dayLabel: '',
+  date: '',
+  city: '',
+  plan: '',
+  stay: '',
+  transport: '',
+  duration: '',
+  note: ''
 };
 const BOY_NAME = '大笨蛋北七';
 const GIRL_NAME = '小笨蛋粽子';
@@ -720,6 +767,17 @@ const cloudToken = ref('');
 const cloudStatus = ref('尚未同步');
 const cloudSyncBusy = ref(false);
 const cloudSyncConfigured = isCloudSyncConfigured();
+const localPreviewMode = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+const journeyTrips = ref<JourneyTrip[]>([]);
+const activeJourneyTripId = ref('');
+const activeJourneyDayId = ref('');
+const journeyImportText = ref('');
+const journeyImportMessage = ref('');
+const journeyImportBusy = ref(false);
+const journeyOcrProgress = ref(0);
+const journeyNewTripTitle = ref('');
+const journeyNewDayDate = ref('');
+const journeyPanelMode = ref<JourneyPanelMode>('schedule');
 
 let timer: number | undefined;
 let secretPressTimer: number | undefined;
@@ -1021,7 +1079,7 @@ const sceneStyle = computed(() => ({
   '--scene-tilt-y': `${sceneTilt.value.y}deg`
 }));
 const activeTabIndex = computed(() => {
-  const tabs: ActiveTab[] = ['countdown', 'today', 'memories', 'prepare'];
+  const tabs: ActiveTab[] = ['countdown', 'today', 'journey', 'memories', 'prepare'];
   return Math.max(tabs.indexOf(activeTab.value), 0);
 });
 const navIndicatorStyle = computed(() => ({
@@ -1044,6 +1102,163 @@ const visibleCapsulesDisplay = computed(() => {
   const lockedPreview = visibleCapsules.value.find((capsule) => !capsule.unlocked);
   return lockedPreview ? [...recent, lockedPreview] : recent;
 });
+const activeJourneyTrip = computed(() => {
+  if (!journeyTrips.value.length) return null;
+  return (
+    journeyTrips.value.find((trip) => trip.id === activeJourneyTripId.value) ??
+    getNearestJourneyTrip(journeyTrips.value, todayStart.value)
+  );
+});
+const activeJourneyDays = computed(() => activeJourneyTrip.value?.days ?? []);
+const activeJourneyDay = computed(() => {
+  const trip = activeJourneyTrip.value;
+  if (!trip?.days.length) return null;
+  return (
+    trip.days.find((day) => day.id === activeJourneyDayId.value) ??
+    trip.days.find((day) => day.date === dateKey.value) ??
+    trip.days.find((day) => new Date(`${day.date}T00:00:00`).getTime() >= todayStart.value.getTime()) ??
+    trip.days[0]
+  );
+});
+const activeJourneyDayIndex = computed(() =>
+  activeJourneyDay.value ? Math.max(activeJourneyDays.value.findIndex((day) => day.id === activeJourneyDay.value?.id), 0) : 0
+);
+const activeJourneyDayEntries = computed(() => {
+  const day = activeJourneyDay.value;
+  if (!day) return [];
+  return [...day.entries].sort((left, right) => {
+    const leftTime = parseTimeSortValue(left.time);
+    const rightTime = parseTimeSortValue(right.time);
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return day.entries.indexOf(left) - day.entries.indexOf(right);
+  });
+});
+const activeJourneyScheduleSections = computed<JourneyScheduleSection[]>(() => {
+  const sections = [
+    { id: 'morning', label: '上午', caption: '00:00 - 11:59' },
+    { id: 'afternoon', label: '下午', caption: '12:00 - 17:59' },
+    { id: 'evening', label: '晚上', caption: '18:00 - 23:59' },
+    { id: 'unscheduled', label: '待安排', caption: '還沒有時間' }
+  ];
+  return sections
+    .map((section) => ({
+      ...section,
+      entries: activeJourneyDayEntries.value.filter((entry) => getJourneyEntrySectionId(entry) === section.id)
+    }))
+    .filter((section) => section.entries.length);
+});
+const journeyTripOptions = computed(() =>
+  [...journeyTrips.value].sort((left, right) => {
+    const leftDistance = Math.abs(parseDateToDay(left.startDate).getTime() - todayStart.value.getTime());
+    const rightDistance = Math.abs(parseDateToDay(right.startDate).getTime() - todayStart.value.getTime());
+    return leftDistance - rightDistance;
+  })
+);
+const activeJourneyProgress = computed(() => {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return 0;
+  const entries = trip.days.flatMap((day) => day.entries);
+  if (!entries.length) return 0;
+  return Math.round((entries.filter((entry) => entry.done).length / entries.length) * 100);
+});
+const activeJourneyDateRange = computed(() => {
+  const trip = activeJourneyTrip.value;
+  return trip ? `${formatJourneyDateLabel(trip.startDate)} - ${formatJourneyDateLabel(trip.endDate)}` : '';
+});
+const activeJourneyMonthLabel = computed(() => {
+  const day = activeJourneyDay.value ?? activeJourneyDays.value[0];
+  if (!day) return '';
+  const date = parseDateToDay(day.date);
+  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月`;
+});
+const activeJourneyDayMeta = computed(() => {
+  const day = activeJourneyDay.value;
+  if (!day) return { entries: 0, done: 0, transport: 0, stay: '', city: '' };
+  return {
+    entries: day.entries.length,
+    done: day.entries.filter((entry) => entry.done).length,
+    transport: day.entries.filter((entry) => entry.transport.trim()).length,
+    stay: day.stay,
+    city: day.city
+  };
+});
+const journeySummaryStats = computed(() => {
+  const trip = activeJourneyTrip.value;
+  const entries = trip?.days.flatMap((day) => day.entries) ?? [];
+  const stays = new Set((trip?.days ?? []).map((day) => day.stay).filter((stay) => stay && stay !== '-'));
+  const transports = entries.filter((entry) => entry.transport.trim()).length;
+  return [
+    { label: '天數', value: `${trip?.days.length ?? 0}` },
+    { label: '行程', value: `${entries.length}` },
+    { label: '交通', value: `${transports}` },
+    { label: '住宿', value: `${stays.size}` }
+  ];
+});
+const journeyCalendarCells = computed(() => {
+  const days = activeJourneyDays.value;
+  if (!days.length) return [];
+  const firstDay = parseDateToDay(days[0].date);
+  const leading = (firstDay.getDay() + 6) % 7;
+  const cells: Array<{
+    id: string;
+    date: string;
+    dayNumber: number;
+    label: string;
+    city: string;
+    isActive: boolean;
+    isToday: boolean;
+    isBlank: boolean;
+    done: number;
+    total: number;
+  }> = [];
+  for (let index = 0; index < leading; index += 1) {
+    cells.push({
+      id: `blank-${index}`,
+      date: '',
+      dayNumber: 0,
+      label: '',
+      city: '',
+      isActive: false,
+      isToday: false,
+      isBlank: true,
+      done: 0,
+      total: 0
+    });
+  }
+  days.forEach((day, index) => {
+    const date = parseDateToDay(day.date);
+    cells.push({
+      id: day.id,
+      date: day.date,
+      dayNumber: date.getDate(),
+      label: day.dayLabel || `Day ${index + 1}`,
+      city: day.city,
+      isActive: activeJourneyDay.value?.id === day.id,
+      isToday: formatDateKey(date) === dateKey.value,
+      isBlank: false,
+      done: day.entries.filter((entry) => entry.done).length,
+      total: day.entries.length
+    });
+  });
+  return cells;
+});
+const journeyTripCountdownLabel = computed(() => {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return '尚未建立旅程';
+  const start = parseDateToDay(trip.startDate);
+  const end = parseDateToDay(trip.endDate);
+  if (todayStart.value.getTime() < start.getTime()) {
+    const days = Math.ceil((start.getTime() - todayStart.value.getTime()) / DAY_MS);
+    return `${days} 天後出發`;
+  }
+  if (todayStart.value.getTime() <= end.getTime()) return '旅程進行中';
+  return '旅程已完成';
+});
+const journeyImportHelp = computed(() =>
+  journeyImportBusy.value
+    ? `正在辨識圖片與整理表格 ${journeyOcrProgress.value}%`
+    : '可匯入 Excel、CSV、TSV、圖片，或直接貼上表格文字。'
+);
 
 watch(
   dateKey,
@@ -1083,6 +1298,7 @@ watch(
 
 onMounted(() => {
   loadSettings();
+  loadJourneyTrips();
   loadSuitcase();
   loadCheckins();
   loadMoodHistory();
@@ -1103,6 +1319,10 @@ onMounted(() => {
   timer = window.setInterval(() => {
     now.value = new Date();
   }, 1_000);
+  if (localPreviewMode) {
+    useLocalDataForThisSession();
+    return;
+  }
   restoreSavedCloudSession();
 });
 
@@ -1808,6 +2028,7 @@ function reloadPersistentState() {
   loadSettings();
   loadWishes();
   loadMeetingMoments();
+  loadJourneyTrips();
 }
 
 function resetToday() {
@@ -2051,14 +2272,649 @@ function updateInstalledDisplayMode() {
   installedDisplayMode.value = window.matchMedia('(display-mode: standalone)').matches || standaloneNavigator.standalone === true;
 }
 
+function loadJourneyTrips() {
+  const stored = localStorage.getItem(storageKey('journey-trips'));
+  if (!stored) {
+    journeyTrips.value = [createDefaultJourneyTrip()];
+    activeJourneyTripId.value = journeyTrips.value[0]?.id ?? '';
+    saveJourneyTrips(false);
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) throw new Error('Journey trips must be an array.');
+    const trips = parsed.map(normalizeJourneyTrip).filter((trip): trip is JourneyTrip => Boolean(trip));
+    journeyTrips.value = trips.length ? trips : [createDefaultJourneyTrip()];
+  } catch {
+    journeyTrips.value = [createDefaultJourneyTrip()];
+  }
+
+  const preferredTripId = localStorage.getItem(storageKey('active-journey-trip')) ?? '';
+  const preferredTrip = journeyTrips.value.find((trip) => trip.id === preferredTripId);
+  activeJourneyTripId.value = preferredTrip?.id ?? getNearestJourneyTrip(journeyTrips.value, todayStart.value)?.id ?? journeyTrips.value[0]?.id ?? '';
+}
+
+function saveJourneyTrips(sync = true) {
+  localStorage.setItem(storageKey('journey-trips'), JSON.stringify(journeyTrips.value));
+  if (activeJourneyTripId.value) {
+    localStorage.setItem(storageKey('active-journey-trip'), activeJourneyTripId.value);
+  }
+  if (sync) requestCloudSync();
+}
+
+function selectJourneyTrip(tripId: string) {
+  activeJourneyTripId.value = tripId;
+  activeJourneyDayId.value = '';
+  localStorage.setItem(storageKey('active-journey-trip'), tripId);
+  requestCloudSync();
+}
+
+function selectJourneyDay(dayId: string) {
+  activeJourneyDayId.value = dayId;
+}
+
+function getInputValue(event: Event) {
+  return (event.target as HTMLInputElement).value;
+}
+
+function getTextareaValue(event: Event) {
+  return (event.target as HTMLTextAreaElement).value;
+}
+
+function selectJourneyTripFromEvent(event: Event) {
+  selectJourneyTrip(getInputValue(event));
+}
+
+function createBlankJourneyTrip() {
+  const today = formatDateKey(todayStart.value);
+  const title = journeyNewTripTitle.value.trim() || `新的旅程 ${formatJourneyDateLabel(today)}`;
+  const trip: JourneyTrip = {
+    id: createLocalId('trip'),
+    title,
+    startDate: today,
+    endDate: today,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    sourceName: '手動建立',
+    days: [createJourneyDay(1, today)]
+  };
+  journeyTrips.value = [trip, ...journeyTrips.value];
+  activeJourneyTripId.value = trip.id;
+  activeJourneyDayId.value = trip.days[0]?.id ?? '';
+  journeyNewTripTitle.value = '';
+  journeyImportMessage.value = '已建立新的空白旅程。';
+  saveJourneyTrips();
+}
+
+function removeJourneyTrip(tripId: string) {
+  if (journeyTrips.value.length <= 1) {
+    journeyImportMessage.value = '至少保留一個旅程。';
+    return;
+  }
+  journeyTrips.value = journeyTrips.value.filter((trip) => trip.id !== tripId);
+  activeJourneyTripId.value = getNearestJourneyTrip(journeyTrips.value, todayStart.value)?.id ?? journeyTrips.value[0]?.id ?? '';
+  journeyImportMessage.value = '已刪除旅程。';
+  saveJourneyTrips();
+}
+
+function addJourneyDay() {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  const fallback = trip.days.length ? addDays(parseDateToDay(trip.days[trip.days.length - 1].date), 1) : todayStart.value;
+  const date = normalizeImportedDate(journeyNewDayDate.value, fallback) || formatDateKey(fallback);
+  const nextDay = createJourneyDay(trip.days.length + 1, date);
+  updateJourneyTrip(trip.id, {
+    days: renumberJourneyDays([...trip.days, nextDay])
+  });
+  activeJourneyDayId.value = nextDay.id;
+  journeyNewDayDate.value = '';
+  journeyImportMessage.value = '已新增一天。';
+}
+
+function removeJourneyDay(dayId: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip || trip.days.length <= 1) return;
+  updateJourneyTrip(trip.id, {
+    days: renumberJourneyDays(trip.days.filter((day) => day.id !== dayId))
+  });
+  if (activeJourneyDayId.value === dayId) activeJourneyDayId.value = '';
+}
+
+function addJourneyEntry(dayId: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  updateJourneyTrip(trip.id, {
+    days: trip.days.map((day) =>
+      day.id === dayId
+        ? {
+            ...day,
+            entries: [
+              ...day.entries,
+              createJourneyEntry({
+                dayLabel: day.dayLabel,
+                date: day.date,
+                city: day.city,
+                plan: '',
+                stay: day.stay,
+                transport: '',
+                duration: '',
+                note: ''
+              })
+            ]
+          }
+        : day
+    )
+  });
+}
+
+function updateJourneyDayField(dayId: string, field: 'date' | 'city' | 'stay', value: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  updateJourneyTrip(trip.id, {
+    days: trip.days.map((day) => (day.id === dayId ? { ...day, [field]: value } : day))
+  });
+}
+
+function updateJourneyEntryField(dayId: string, entryId: string, field: JourneyEditableEntryField, value: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  updateJourneyTrip(trip.id, {
+    days: trip.days.map((day) =>
+      day.id === dayId
+        ? {
+            ...day,
+            entries: day.entries.map((entry) => (entry.id === entryId ? { ...entry, [field]: value } : entry))
+          }
+        : day
+    )
+  });
+}
+
+function toggleJourneyEntryDone(dayId: string, entryId: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  updateJourneyTrip(trip.id, {
+    days: trip.days.map((day) =>
+      day.id === dayId
+        ? {
+            ...day,
+            entries: day.entries.map((entry) => (entry.id === entryId ? { ...entry, done: !entry.done } : entry))
+          }
+        : day
+    )
+  });
+  gentleVibrate(8);
+}
+
+function removeJourneyEntry(dayId: string, entryId: string) {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  updateJourneyTrip(trip.id, {
+    days: trip.days.map((day) =>
+      day.id === dayId
+        ? { ...day, entries: day.entries.filter((entry) => entry.id !== entryId) }
+        : day
+    )
+  });
+}
+
+function updateJourneyTrip(tripId: string, patch: Partial<JourneyTrip>) {
+  journeyTrips.value = journeyTrips.value.map((trip) => {
+    if (trip.id !== tripId) return trip;
+    const next = normalizeJourneyTrip({
+      ...trip,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
+    return next ?? trip;
+  });
+  saveJourneyTrips();
+}
+
+async function importJourneyFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  journeyImportBusy.value = true;
+  journeyOcrProgress.value = 0;
+  journeyImportMessage.value = '正在讀取檔案...';
+
+  try {
+    const rows = file.type.startsWith('image/')
+      ? await parseJourneyRowsFromImage(file)
+      : await parseJourneyRowsFromSpreadsheetFile(file);
+    importJourneyRows(rows, file.name);
+  } catch (error) {
+    journeyImportMessage.value = error instanceof Error ? error.message : '匯入失敗，請確認檔案內容。';
+  } finally {
+    journeyImportBusy.value = false;
+    journeyOcrProgress.value = 0;
+    input.value = '';
+  }
+}
+
+function importJourneyText() {
+  try {
+    const rows = parseJourneyRowsFromText(journeyImportText.value);
+    importJourneyRows(rows, '貼上的表格文字');
+    journeyImportText.value = '';
+  } catch (error) {
+    journeyImportMessage.value = error instanceof Error ? error.message : '表格文字無法解析。';
+  }
+}
+
+async function parseJourneyRowsFromImage(file: File) {
+  journeyImportMessage.value = '正在辨識圖片文字，第一次會稍久一點。';
+  const worker = await createWorker('chi_tra+eng', undefined, {
+    logger: (message) => {
+      if (message.status === 'recognizing text') {
+        journeyOcrProgress.value = Math.round((message.progress ?? 0) * 100);
+      }
+    }
+  });
+
+  try {
+    const result = await worker.recognize(file);
+    const text = result.data.text.trim();
+    if (!text) throw new Error('圖片沒有辨識到可用文字，請換更清晰的截圖或貼上表格文字。');
+    journeyImportText.value = text;
+    return parseJourneyRowsFromText(text);
+  } finally {
+    await worker.terminate();
+  }
+}
+
+async function parseJourneyRowsFromSpreadsheetFile(file: File) {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) throw new Error('檔案裡沒有可讀取的工作表。');
+  const sheet = workbook.Sheets[firstSheet];
+  const matrix = XLSX.utils.sheet_to_json<Array<string | number | boolean | Date | null>>(sheet, {
+    header: 1,
+    defval: ''
+  });
+  return parseJourneyRowsFromMatrix(matrix);
+}
+
+function parseJourneyRowsFromText(text: string) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) throw new Error('沒有找到可匯入的表格內容。');
+
+  const matrix = lines.map((line) => {
+    if (line.includes('\t')) return line.split('\t');
+    if (line.includes(',')) return parseCsvLine(line);
+    const wideSplit = line.split(/\s{2,}/).filter(Boolean);
+    if (wideSplit.length >= 4) return wideSplit;
+    return parseLooseJourneyLine(line);
+  });
+  return parseJourneyRowsFromMatrix(matrix);
+}
+
+function parseJourneyRowsFromMatrix(matrix: Array<Array<string | number | boolean | Date | null>>) {
+  const cleaned = matrix
+    .map((row) => row.map((cell) => normalizeImportCell(cell)))
+    .filter((row) => row.some(Boolean));
+  if (!cleaned.length) throw new Error('沒有找到可匯入的表格內容。');
+
+  const headerIndex = cleaned.findIndex((row) => row.some((cell) => /day|日期|城市|行程|住宿|交通|備註/i.test(cell)));
+  const hasHeader = headerIndex >= 0;
+  const headers = hasHeader ? cleaned[headerIndex] : JOURNEY_IMPORT_HEADERS;
+  const rows = (hasHeader ? cleaned.slice(headerIndex + 1) : cleaned).map((row, index) => mapJourneyImportRow(headers, row, index));
+  const validRows = rows.filter((row) => row.date || row.city || row.plan || row.stay || row.transport || row.note);
+  if (!validRows.length) throw new Error('沒有解析到行程列，請確認表格至少包含日期、城市或行程。');
+  return validRows;
+}
+
+function mapJourneyImportRow(headers: string[], row: string[], index: number): JourneyImportRow {
+  const mapped: JourneyImportRow = { ...emptyJourneyDraftRow };
+  const hasUsefulHeader = headers.some((header) => findJourneyFieldByHeader(header));
+
+  if (hasUsefulHeader) {
+    headers.forEach((header, columnIndex) => {
+      const field = findJourneyFieldByHeader(header);
+      if (field) mapped[field] = row[columnIndex] ?? '';
+    });
+  } else {
+    mapped.dayLabel = row[0] ?? `Day ${index + 1}`;
+    mapped.date = row[1] ?? '';
+    mapped.city = row[2] ?? '';
+    mapped.plan = row[3] ?? '';
+    mapped.stay = row[4] ?? '';
+    mapped.transport = row[5] ?? '';
+    mapped.duration = row[6] ?? '';
+    mapped.note = row.slice(7).filter(Boolean).join(' ');
+  }
+
+  if (!mapped.dayLabel) mapped.dayLabel = `Day ${index + 1}`;
+  return mapped;
+}
+
+function findJourneyFieldByHeader(header: string) {
+  const normalized = header.trim().toLowerCase();
+  return (Object.keys(JOURNEY_COLUMN_ALIASES) as Array<keyof JourneyImportRow>).find((field) =>
+    JOURNEY_COLUMN_ALIASES[field].some((alias) => normalized === alias.toLowerCase() || normalized.includes(alias.toLowerCase()))
+  );
+}
+
+function parseLooseJourneyLine(line: string) {
+  const match = /^(day\s*\d+|第?\s*\d+\s*天)?\s*(\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,4})?)?\s*(.*)$/i.exec(line);
+  if (!match) return [line];
+  const rest = match[3]?.trim() ?? '';
+  return [match[1] ?? '', match[2] ?? '', '', rest];
+}
+
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let current = '';
+  let quoted = false;
+  for (const char of line) {
+    if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function importJourneyRows(rows: JourneyImportRow[], sourceName: string) {
+  const trip = buildJourneyTripFromRows(rows, sourceName);
+  journeyTrips.value = [trip, ...journeyTrips.value];
+  activeJourneyTripId.value = trip.id;
+  activeJourneyDayId.value = trip.days[0]?.id ?? '';
+  journeyImportMessage.value = `已建立「${trip.title}」，共 ${trip.days.length} 天。`;
+  activeTab.value = 'journey';
+  saveJourneyTrips();
+}
+
+function buildJourneyTripFromRows(rows: JourneyImportRow[], sourceName: string): JourneyTrip {
+  const days: JourneyPlanDay[] = [];
+  let lastDate: Date | null = null;
+
+  rows.forEach((row) => {
+    const fallbackDate = lastDate ? addDays(lastDate, 1) : todayStart.value;
+    const normalizedDate = normalizeImportedDate(row.date, fallbackDate) || formatDateKey(fallbackDate);
+    lastDate = parseDateToDay(normalizedDate);
+    const dayLabel = row.dayLabel || `Day ${days.length + 1}`;
+    const existingDay = days.find((day) => day.dayLabel === dayLabel || day.date === normalizedDate);
+    const targetDay =
+      existingDay ??
+      createJourneyDay(days.length + 1, normalizedDate, {
+        dayLabel,
+        city: row.city,
+        stay: row.stay
+      });
+
+    if (!existingDay) days.push(targetDay);
+    if (row.city && !targetDay.city) targetDay.city = row.city;
+    if (row.stay && !targetDay.stay) targetDay.stay = row.stay;
+    targetDay.entries.push(createJourneyEntry(row));
+  });
+
+  const sortedDays = renumberJourneyDays(days.sort((left, right) => parseDateToDay(left.date).getTime() - parseDateToDay(right.date).getTime()));
+  const startDate = sortedDays[0]?.date ?? formatDateKey(todayStart.value);
+  const endDate = sortedDays[sortedDays.length - 1]?.date ?? startDate;
+  const title = createJourneyTitleFromDays(sortedDays, sourceName);
+
+  return {
+    id: createLocalId('trip'),
+    title,
+    startDate,
+    endDate,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    sourceName,
+    days: sortedDays
+  };
+}
+
+function exportActiveJourneyCalendar() {
+  const trip = activeJourneyTrip.value;
+  if (!trip) return;
+  const events = trip.days.flatMap((day) =>
+    day.entries
+      .filter((entry) => entry.plan || entry.transport || entry.note)
+      .map((entry, index) => {
+        const start = parseJourneyEntryDateTime(day.date, entry.time, index);
+        return {
+          title: entry.plan || entry.transport || `${trip.title} ${day.dayLabel}`,
+          description: [
+            day.city && `城市：${day.city}`,
+            entry.stay && `住宿：${entry.stay}`,
+            entry.transport && `交通：${entry.transport}`,
+            entry.duration && `車程/時間：${entry.duration}`,
+            entry.note && `備註：${entry.note}`
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          start,
+          end: new Date(start.getTime() + 90 * 60 * 1000)
+        };
+      })
+  );
+  if (!events.length) {
+    journeyImportMessage.value = '目前沒有可匯出的行程。';
+    return;
+  }
+  downloadCalendar(events, `${trip.title}-journey.ics`);
+  journeyImportMessage.value = '已匯出旅程行事曆。';
+}
+
+function createDefaultJourneyTrip(): JourneyTrip {
+  return buildJourneyTripFromRows(
+    [
+      { dayLabel: 'Day 1', date: '2026-11-19', city: '布拉格', plan: '抵達、天文鐘、舊城廣場、查理大橋夜景', stay: '布拉格', transport: '飛機 + 市區交通', duration: '', note: '11/18 18:15 - 06:25、11/19 00:05 - 08:15' },
+      { dayLabel: 'Day 2', date: '2026-11-20', city: '布拉格 -> 克拉科夫', plan: '中央廣場、聖母聖殿、老城區', stay: '克拉科夫', transport: 'RegioJet', duration: '約 6.5 - 7hr', note: '早班車' },
+      { dayLabel: 'Day 3', date: '2026-11-21', city: '克拉科夫', plan: '奧斯威辛集中營', stay: '克拉科夫', transport: '巴士', duration: '約 1.5hr', note: '需要預約時段' },
+      { dayLabel: 'Day 4', date: '2026-11-22', city: '克拉科夫', plan: '瓦維爾城堡、鹽礦', stay: '克拉科夫', transport: '', duration: '', note: '還不知道要幹嘛的一天' },
+      { dayLabel: 'Day 5', date: '2026-11-23', city: '克拉科夫 -> 華沙', plan: '老城、皇家城堡', stay: '華沙', transport: '', duration: '', note: '' },
+      { dayLabel: 'Day 6', date: '2026-11-24', city: '華沙', plan: '自由探索與補圖', stay: '華沙', transport: '', duration: '', note: '' },
+      { dayLabel: 'Day 7', date: '2026-11-25', city: '華沙 -> 格但斯克', plan: '想去哪你說看看', stay: '格但斯克', transport: '', duration: '', note: '' },
+      { dayLabel: 'Day 8', date: '2026-11-26', city: '格但斯克', plan: '還沒研究', stay: '格但斯克', transport: '', duration: '', note: '' },
+      { dayLabel: 'Day 9', date: '2026-11-27', city: '格但斯克 -> 布拉格', plan: '返回布拉格', stay: '布拉格', transport: '飛機', duration: '約 1.5hr', note: '' },
+      { dayLabel: 'Day 10', date: '2026-11-28', city: '布拉格', plan: '城堡、聖維特教堂、黃金巷', stay: '布拉格', transport: '', duration: '', note: '' },
+      { dayLabel: 'Day 11', date: '2026-11-29', city: '布拉格', plan: '可以睡覺睡整天嗎？好哇！', stay: '布拉格', transport: '', duration: '', note: '' },
+      { dayLabel: 'Day 12', date: '2026-11-30', city: '布拉格 -> 台灣', plan: '掰掰歐洲', stay: '-', transport: '飛機', duration: '約 15hr', note: '' }
+    ],
+    '範例旅程'
+  );
+}
+
+function createJourneyTitleFromDays(days: JourneyPlanDay[], sourceName: string) {
+  const routeCities = days
+    .flatMap((day) => day.city.split(/(?:->|→|到)/g))
+    .map((city) => city.trim())
+    .filter(Boolean);
+  const startCity = routeCities[0] ?? '';
+  const endCity = routeCities[routeCities.length - 1] ?? '';
+  if (startCity && endCity && startCity !== endCity) return `${startCity}到${endCity}旅程`;
+  if (startCity) return `${startCity}旅程`;
+  return sourceName.replace(/\.[^.]+$/, '') || '匯入旅程';
+}
+
+function createJourneyDay(dayNumber: number, date: string, patch: Partial<JourneyPlanDay> = {}): JourneyPlanDay {
+  return {
+    id: createLocalId('day'),
+    dayLabel: patch.dayLabel || `Day ${dayNumber}`,
+    date,
+    city: patch.city ?? '',
+    stay: patch.stay ?? '',
+    entries: patch.entries ?? []
+  };
+}
+
+function createJourneyEntry(row: JourneyImportRow): JourneyEntry {
+  return {
+    id: createLocalId('entry'),
+    time: '',
+    city: row.city,
+    plan: row.plan,
+    stay: row.stay,
+    transport: row.transport,
+    duration: row.duration,
+    note: row.note,
+    done: false
+  };
+}
+
+function normalizeJourneyTrip(value: Partial<JourneyTrip> | null | undefined): JourneyTrip | null {
+  if (!value || typeof value !== 'object') return null;
+  const days = Array.isArray(value.days)
+    ? value.days
+        .map((day, index): JourneyPlanDay | null => {
+          if (!day || typeof day !== 'object') return null;
+          const date = normalizeImportedDate(day.date ?? '', addDays(todayStart.value, index)) || formatDateKey(addDays(todayStart.value, index));
+          return {
+            id: typeof day.id === 'string' ? day.id : createLocalId('day'),
+            dayLabel: typeof day.dayLabel === 'string' && day.dayLabel ? day.dayLabel : `Day ${index + 1}`,
+            date,
+            city: typeof day.city === 'string' ? day.city : '',
+            stay: typeof day.stay === 'string' ? day.stay : '',
+            entries: Array.isArray(day.entries)
+              ? day.entries.map(normalizeJourneyEntry).filter((entry): entry is JourneyEntry => Boolean(entry))
+              : []
+          };
+        })
+        .filter((day): day is JourneyPlanDay => Boolean(day))
+    : [];
+  const safeDays = renumberJourneyDays(days.length ? days : [createJourneyDay(1, formatDateKey(todayStart.value))]);
+  const storedTitle = typeof value.title === 'string' && value.title.trim() ? value.title.trim() : '';
+  const title = storedTitle.includes('->') ? createJourneyTitleFromDays(safeDays, value.sourceName ?? '匯入旅程') : storedTitle || '未命名旅程';
+  return {
+    id: typeof value.id === 'string' ? value.id : createLocalId('trip'),
+    title,
+    startDate: safeDays[0].date,
+    endDate: safeDays[safeDays.length - 1].date,
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : new Date().toISOString(),
+    sourceName: typeof value.sourceName === 'string' ? value.sourceName : '未知來源',
+    days: safeDays
+  };
+}
+
+function normalizeJourneyEntry(entry: Partial<JourneyEntry> | null | undefined): JourneyEntry | null {
+  if (!entry || typeof entry !== 'object') return null;
+  return {
+    id: typeof entry.id === 'string' ? entry.id : createLocalId('entry'),
+    time: typeof entry.time === 'string' ? entry.time : '',
+    city: typeof entry.city === 'string' ? entry.city : '',
+    plan: typeof entry.plan === 'string' ? entry.plan : '',
+    stay: typeof entry.stay === 'string' ? entry.stay : '',
+    transport: typeof entry.transport === 'string' ? entry.transport : '',
+    duration: typeof entry.duration === 'string' ? entry.duration : '',
+    note: typeof entry.note === 'string' ? entry.note : '',
+    done: Boolean(entry.done)
+  };
+}
+
+function renumberJourneyDays(days: JourneyPlanDay[]) {
+  return days.map((day, index) => ({
+    ...day,
+    dayLabel: day.dayLabel || `Day ${index + 1}`
+  }));
+}
+
+function getNearestJourneyTrip(trips: JourneyTrip[], from: Date) {
+  return [...trips].sort((left, right) => {
+    const leftStart = parseDateToDay(left.startDate).getTime();
+    const rightStart = parseDateToDay(right.startDate).getTime();
+    const fromTime = from.getTime();
+    const leftDistance = leftStart >= fromTime ? leftStart - fromTime : Math.abs(parseDateToDay(left.endDate).getTime() - fromTime) + DAY_MS * 365;
+    const rightDistance = rightStart >= fromTime ? rightStart - fromTime : Math.abs(parseDateToDay(right.endDate).getTime() - fromTime) + DAY_MS * 365;
+    return leftDistance - rightDistance;
+  })[0];
+}
+
+function normalizeImportedDate(value: string, fallback: Date) {
+  const text = value.trim();
+  if (!text) return '';
+  const normalized = text.replace(/[.]/g, '/');
+  let year = fallback.getFullYear();
+  let month = 0;
+  let day = 0;
+  const full = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/.exec(normalized);
+  const short = /^(\d{1,2})[/-](\d{1,2})$/.exec(normalized);
+  if (full) {
+    year = Number(full[1]);
+    month = Number(full[2]);
+    day = Number(full[3]);
+  } else if (short) {
+    month = Number(short[1]);
+    day = Number(short[2]);
+    const candidate = new Date(year, month - 1, day);
+    if (candidate.getTime() < addDays(todayStart.value, -180).getTime()) year += 1;
+  } else {
+    return '';
+  }
+  const maxDay = new Date(year, month, 0).getDate();
+  if (month < 1 || month > 12 || day < 1 || day > maxDay) return '';
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function parseDateToDay(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return new Date(todayStart.value);
+  return new Date(year, month - 1, day);
+}
+
+function formatJourneyDateLabel(value: string) {
+  const date = parseDateToDay(value);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function parseJourneyEntryDateTime(date: string, time: string, index: number) {
+  const day = parseDateToDay(date);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (match) {
+    day.setHours(clamp(Number(match[1]), 0, 23), clamp(Number(match[2]), 0, 59), 0, 0);
+    return day;
+  }
+  day.setHours(9 + Math.min(index, 8), 0, 0, 0);
+  return day;
+}
+
+function parseTimeSortValue(value: string) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return Number.MAX_SAFE_INTEGER;
+  return clamp(Number(match[1]), 0, 23) * 60 + clamp(Number(match[2]), 0, 59);
+}
+
+function getJourneyEntrySectionId(entry: JourneyEntry) {
+  const minutes = parseTimeSortValue(entry.time);
+  if (minutes === Number.MAX_SAFE_INTEGER) return 'unscheduled';
+  if (minutes < 12 * 60) return 'morning';
+  if (minutes < 18 * 60) return 'afternoon';
+  return 'evening';
+}
+
+function normalizeImportCell(value: string | number | boolean | Date | null) {
+  if (value instanceof Date) return formatDateKey(value);
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function createLocalId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function updateAppThemeChrome(theme: ThemeId) {
   const chrome = THEME_CHROME_COLORS[theme];
   const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   const statusBarMeta = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-status-bar-style"]');
   if (themeColorMeta) themeColorMeta.content = chrome.color;
   if (statusBarMeta) statusBarMeta.content = chrome.statusBar;
-  document.documentElement.style.backgroundColor = chrome.background;
-  document.body.style.backgroundColor = chrome.background;
+  document.documentElement.style.setProperty('--app-page-background', chrome.background);
+  document.documentElement.style.background = chrome.background;
+  document.body.style.background = chrome.background;
 }
 
 async function installApp() {
@@ -2821,6 +3677,170 @@ function clamp(value: number, min: number, max: number) {
       <p class="fortune-line">{{ fortuneReady ? fortuneLine : '一天只抽一次，讓今天自己說話。' }}</p>
     </section>
 
+    <section v-show="activeTab === 'journey'" class="travel-board-section" aria-labelledby="travel-board-title">
+      <div class="travel-hero">
+        <div>
+          <p class="section-kicker">共同旅程</p>
+          <h2 id="travel-board-title">{{ activeJourneyTrip?.title ?? '旅程行事曆' }}</h2>
+          <p>{{ activeJourneyDateRange }} · {{ journeyTripCountdownLabel }}</p>
+        </div>
+        <div class="travel-progress-ring" :style="{ '--travel-progress': `${activeJourneyProgress}%` }">
+          <strong>{{ activeJourneyProgress }}%</strong>
+          <span>完成</span>
+        </div>
+      </div>
+
+      <div class="travel-trip-row">
+        <select :value="activeJourneyTrip?.id ?? ''" aria-label="選擇旅程" @change="selectJourneyTripFromEvent">
+          <option v-for="trip in journeyTripOptions" :key="trip.id" :value="trip.id">
+            {{ trip.title }} · {{ formatJourneyDateLabel(trip.startDate) }}
+          </option>
+        </select>
+        <button class="ghost-button" type="button" @click="journeyPanelMode = 'import'">匯入</button>
+      </div>
+
+      <div class="travel-mode-switch" role="tablist" aria-label="旅程檢視">
+        <button type="button" :class="{ active: journeyPanelMode === 'schedule' }" @click="journeyPanelMode = 'schedule'">行事曆</button>
+        <button type="button" :class="{ active: journeyPanelMode === 'import' }" @click="journeyPanelMode = 'import'">資料工具</button>
+      </div>
+
+      <div class="travel-stat-grid" aria-label="旅程總覽">
+        <article v-for="stat in journeySummaryStats" :key="stat.label">
+          <span>{{ stat.label }}</span>
+          <strong>{{ stat.value }}</strong>
+        </article>
+      </div>
+
+      <template v-if="journeyPanelMode === 'schedule'">
+        <div class="travel-calendar-card" aria-label="旅程月曆">
+          <div class="travel-calendar-head">
+            <div>
+              <span>Itinerary</span>
+              <strong>{{ activeJourneyMonthLabel }}</strong>
+            </div>
+            <small>{{ activeJourneyDayIndex + 1 }} / {{ activeJourneyDays.length }}</small>
+          </div>
+          <div class="travel-weekdays" aria-hidden="true">
+            <span>一</span>
+            <span>二</span>
+            <span>三</span>
+            <span>四</span>
+            <span>五</span>
+            <span>六</span>
+            <span>日</span>
+          </div>
+          <div class="travel-calendar-grid">
+            <button
+              v-for="cell in journeyCalendarCells"
+              :key="cell.id"
+              type="button"
+              :disabled="cell.isBlank"
+              :class="{ active: cell.isActive, today: cell.isToday, blank: cell.isBlank }"
+              @click="!cell.isBlank && selectJourneyDay(cell.id)"
+            >
+              <span>{{ cell.dayNumber || '' }}</span>
+              <strong>{{ cell.label }}</strong>
+              <em>{{ cell.city }}</em>
+              <i v-if="cell.total">{{ cell.done }}/{{ cell.total }}</i>
+            </button>
+          </div>
+        </div>
+
+        <article v-if="activeJourneyDay" class="travel-day-panel">
+          <div class="travel-day-panel-head">
+            <div>
+              <p class="section-kicker">{{ activeJourneyDay.dayLabel }} · {{ formatJourneyDateLabel(activeJourneyDay.date) }}</p>
+              <h3>{{ activeJourneyDay.city || '未設定城市' }}</h3>
+            </div>
+            <span>{{ activeJourneyDayMeta.done }} / {{ activeJourneyDayMeta.entries }}</span>
+          </div>
+
+          <div class="travel-day-fields">
+            <label>
+              <span>日期</span>
+              <input :value="activeJourneyDay.date" inputmode="numeric" @input="updateJourneyDayField(activeJourneyDay.id, 'date', getInputValue($event))" />
+            </label>
+            <label>
+              <span>城市</span>
+              <input :value="activeJourneyDay.city" @input="updateJourneyDayField(activeJourneyDay.id, 'city', getInputValue($event))" />
+            </label>
+            <label>
+              <span>住宿</span>
+              <input :value="activeJourneyDay.stay" @input="updateJourneyDayField(activeJourneyDay.id, 'stay', getInputValue($event))" />
+            </label>
+          </div>
+
+          <div class="travel-schedule-sections">
+            <section v-for="section in activeJourneyScheduleSections" :key="section.id" class="travel-schedule-section">
+              <div class="travel-schedule-heading">
+                <span>{{ section.label }}</span>
+                <small>{{ section.caption }}</small>
+              </div>
+              <ol class="travel-timeline">
+                <li v-for="entry in section.entries" :key="entry.id" class="travel-event" :class="{ done: entry.done }">
+                  <div class="travel-event-time">
+                    <input :value="entry.time" placeholder="09:30" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', getInputValue($event))" />
+                    <button class="travel-check" type="button" @click="toggleJourneyEntryDone(activeJourneyDay.id, entry.id)">
+                      {{ entry.done ? '✓' : '+' }}
+                    </button>
+                  </div>
+                  <div class="travel-event-body">
+                    <input class="travel-event-title" :value="entry.plan" placeholder="行程安排" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', getInputValue($event))" />
+                    <div class="travel-event-meta">
+                      <input :value="entry.transport" placeholder="交通工具" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', getInputValue($event))" />
+                      <input :value="entry.duration" placeholder="車程/時間" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', getInputValue($event))" />
+                    </div>
+                    <textarea :value="entry.note" placeholder="備註" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', getTextareaValue($event))"></textarea>
+                    <button class="ghost-button travel-remove-entry" type="button" @click="removeJourneyEntry(activeJourneyDay.id, entry.id)">移除</button>
+                  </div>
+                </li>
+              </ol>
+            </section>
+          </div>
+          <p v-if="!activeJourneyDayEntries.length" class="empty-photo-note">這一天還沒有行程，可以先新增一筆。</p>
+
+          <div class="travel-actions">
+            <button class="soft-button" type="button" @click="addJourneyEntry(activeJourneyDay.id)">新增行程</button>
+            <button class="ghost-button" type="button" @click="addJourneyDay">新增一天</button>
+            <button class="ghost-button" type="button" @click="removeJourneyDay(activeJourneyDay.id)">刪除這天</button>
+          </div>
+        </article>
+      </template>
+
+      <template v-else>
+        <div class="travel-import-panel" aria-labelledby="travel-import-title">
+          <div class="section-title-row">
+            <div>
+              <p class="section-kicker">匯入旅程</p>
+              <h2 id="travel-import-title">從表格或圖片產生行事曆</h2>
+            </div>
+          </div>
+          <p class="travel-import-help">{{ journeyImportHelp }}</p>
+          <div class="travel-import-actions">
+            <label class="import-button">
+              <input type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values,image/*" :disabled="journeyImportBusy" @change="importJourneyFile" />
+              匯入檔案
+            </label>
+            <button class="soft-button" type="button" :disabled="journeyImportBusy || !journeyImportText.trim()" @click="importJourneyText">解析貼上內容</button>
+          </div>
+          <textarea v-model="journeyImportText" class="travel-import-textarea" placeholder="貼上 Day、日期、城市、行程安排、住宿、交通工具、車程/時間、備註的表格文字"></textarea>
+          <div class="travel-create-row">
+            <input v-model="journeyNewTripTitle" placeholder="新旅程名稱" />
+            <button class="ghost-button" type="button" @click="createBlankJourneyTrip">建立空白旅程</button>
+          </div>
+          <div class="travel-create-row">
+            <input v-model="journeyNewDayDate" placeholder="新增日期，例如 2026-11-20" />
+            <button class="ghost-button" type="button" @click="addJourneyDay">新增一天</button>
+          </div>
+          <div class="travel-actions">
+            <button class="wide-soft-button" type="button" @click="exportActiveJourneyCalendar">匯出這次旅程行事曆</button>
+            <button class="ghost-button" type="button" @click="activeJourneyTrip && removeJourneyTrip(activeJourneyTrip.id)">刪除旅程</button>
+          </div>
+          <p v-if="journeyImportMessage" class="empty-photo-note">{{ journeyImportMessage }}</p>
+        </div>
+      </template>
+    </section>
+
     <section v-show="activeTab === 'memories'" class="timeline-section" aria-labelledby="timeline-title">
       <div class="section-title-row">
         <div>
@@ -3277,6 +4297,7 @@ function clamp(value: number, min: number, max: number) {
       <span class="nav-indicator" :style="navIndicatorStyle" aria-hidden="true"></span>
       <button type="button" :class="{ active: activeTab === 'countdown' }" @click="activeTab = 'countdown'">倒數</button>
       <button type="button" :class="{ active: activeTab === 'today' }" @click="activeTab = 'today'">今日</button>
+      <button type="button" :class="{ active: activeTab === 'journey' }" @click="activeTab = 'journey'">旅程</button>
       <button type="button" :class="{ active: activeTab === 'memories' }" @click="activeTab = 'memories'">回憶</button>
       <button type="button" :class="{ active: activeTab === 'prepare' }" @click="activeTab = 'prepare'">準備</button>
     </nav>
