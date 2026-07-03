@@ -8,7 +8,8 @@ export function registerAppServiceWorker() {
   if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(__APP_CACHE_VERSION__)}`).catch(() => {
+    const serviceWorkerUrl = new URL(`sw.js?v=${encodeURIComponent(__APP_CACHE_VERSION__)}`, document.baseURI);
+    navigator.serviceWorker.register(serviceWorkerUrl).catch(() => {
       // The app still works online if service worker registration is unavailable.
     });
   });

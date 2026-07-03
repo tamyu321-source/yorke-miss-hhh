@@ -1,14 +1,16 @@
 const CACHE_VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
 const CACHE_NAME = `count-to-814-${CACHE_VERSION}`;
+const SCOPE_URL = self.registration.scope;
+const INDEX_URL = new URL('index.html', SCOPE_URL).toString();
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icon.svg',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/apple-touch-icon.png'
-];
+  '',
+  'index.html',
+  'manifest.webmanifest',
+  'icon.svg',
+  'icon-192.png',
+  'icon-512.png',
+  'apple-touch-icon.png'
+].map((path) => new URL(path, SCOPE_URL).toString());
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -39,10 +41,10 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
+          caches.open(CACHE_NAME).then((cache) => cache.put(INDEX_URL, copy));
           return response;
         })
-        .catch(() => caches.match('/index.html'))
+        .catch(() => caches.match(INDEX_URL))
     );
     return;
   }
@@ -57,7 +59,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
-        .catch(() => caches.match('/index.html'));
+        .catch(() => caches.match(INDEX_URL));
     })
   );
 });

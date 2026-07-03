@@ -53,6 +53,7 @@ const defaultSettings: AppSettings = {
   theme: 'peach',
   startDate: '2026-04-08',
   startTime: '00:00',
+  targetDate: '2026-08-14',
   targetTime: '18:00',
   welcomeLine: '把倒數放慢一點，讓見面自己靠近。',
   reducedMotion: false
@@ -737,8 +738,9 @@ const unlockedCount = computed(() => {
   return Math.min(rawDayIndex.value + 1, journeyDays.value.length);
 });
 const targetDate = computed(() => {
+  const [year, month, day] = parseDateSetting(settings.value.targetDate, defaultSettings.targetDate);
   const [hours, minutes] = parseClockTime(settings.value.targetTime, defaultSettings.targetTime);
-  return new Date(2026, 7, 14, hours, minutes, 0);
+  return new Date(year, month - 1, day, hours, minutes, 0);
 });
 const journeyDays = computed(() => createJourneyDays(configuredStartDay.value, targetDate.value));
 const currentDayIndex = computed(() => clamp(rawDayIndex.value, 0, journeyDays.value.length - 1));
@@ -865,7 +867,8 @@ const secretCodeList = computed(() => [...defaultSecretCodes, ...customSecretCod
 const displayBoyName = computed(() => settings.value.boyName.trim() || BOY_NAME);
 const displayGirlName = computed(() => settings.value.girlName.trim() || GIRL_NAME);
 const startDateLabel = computed(() => `${settings.value.startDate} ${settings.value.startTime}`);
-const targetDateLabel = computed(() => `2026 年 8 月 14 日 ${settings.value.targetTime}`);
+const targetDateLabel = computed(() => `${settings.value.targetDate} ${settings.value.targetTime}`);
+const targetDateShortLabel = computed(() => settings.value.targetDate.replace(/-/g, '.'));
 const themeClass = computed(() => `theme-${settings.value.theme}`);
 const openingThemeLabel = computed(() => {
   if (settings.value.theme === 'mint') return '清風啟程';
@@ -1644,6 +1647,7 @@ function saveSettings() {
     theme: settingsDraft.value.theme,
     startDate: normalizeDateSetting(settingsDraft.value.startDate),
     startTime: normalizeClockTime(settingsDraft.value.startTime, defaultSettings.startTime),
+    targetDate: normalizeDateSetting(settingsDraft.value.targetDate, defaultSettings.targetDate),
     targetTime: normalizeClockTime(settingsDraft.value.targetTime, defaultSettings.targetTime),
     welcomeLine: settingsDraft.value.welcomeLine.trim() || defaultSettings.welcomeLine,
     reducedMotion: settingsDraft.value.reducedMotion
@@ -1683,6 +1687,7 @@ function loadSettings() {
       theme: themeOptions.some((theme) => theme.id === parsed.theme) ? (parsed.theme as ThemeId) : defaultSettings.theme,
       startDate: normalizeDateSetting(parsed.startDate ?? defaultSettings.startDate),
       startTime: normalizeClockTime(parsed.startTime ?? defaultSettings.startTime, defaultSettings.startTime),
+      targetDate: normalizeDateSetting(parsed.targetDate ?? defaultSettings.targetDate, defaultSettings.targetDate),
       targetTime: normalizeClockTime(parsed.targetTime ?? defaultSettings.targetTime, defaultSettings.targetTime),
       reducedMotion: Boolean(parsed.reducedMotion)
     };
@@ -1987,15 +1992,15 @@ function normalizeClockTime(value: string, fallback: string) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-function parseDateSetting(value: string): [number, number, number] {
-  const normalized = normalizeDateSetting(value);
+function parseDateSetting(value: string, fallback = defaultSettings.startDate): [number, number, number] {
+  const normalized = normalizeDateSetting(value, fallback);
   const [year, month, day] = normalized.split('-').map(Number);
   return [year, month, day];
 }
 
-function normalizeDateSetting(value: string) {
+function normalizeDateSetting(value: string, fallback = defaultSettings.startDate) {
   const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value.trim());
-  if (!match) return defaultSettings.startDate;
+  if (!match) return fallback;
   const year = clamp(Number(match[1]), 2020, 2035);
   const month = clamp(Number(match[2]), 1, 12);
   const maxDay = new Date(year, month, 0).getDate();
@@ -2234,14 +2239,14 @@ function clamp(value: number, min: number, max: number) {
     <section v-show="activeTab === 'countdown'" class="hero-section" aria-labelledby="countdown-title">
       <p class="eyebrow">第一次見面倒數</p>
       <h1 id="countdown-title">
-        {{ isMeetingDay ? '2026.08.14' : `${displayGirlName} 飛向 ${displayBoyName}` }}
+        {{ isMeetingDay ? targetDateShortLabel : `${displayGirlName} 飛向 ${displayBoyName}` }}
       </h1>
 
       <div v-if="isMeetingDay" class="arrival-message">
         等待結束，故事正式開始 ❤️
       </div>
 
-      <div v-else class="countdown-grid" aria-label="距離 2026 年 8 月 14 日的倒數">
+      <div v-else class="countdown-grid" :aria-label="`距離 ${targetDateLabel} 的倒數`">
         <div :class="{ flipping: flipUnits.includes('days') }">
           <strong>{{ countdown.days }}</strong>
           <span>天</span>
@@ -2681,6 +2686,10 @@ function clamp(value: number, min: number, max: number) {
         <label>
           <span>開始時間</span>
           <input v-model="settingsDraft.startTime" inputmode="numeric" maxlength="5" placeholder="00:00" />
+        </label>
+        <label>
+          <span>目標日期</span>
+          <input v-model="settingsDraft.targetDate" inputmode="numeric" maxlength="10" placeholder="2026-08-14" />
         </label>
         <label>
           <span>目標時間</span>

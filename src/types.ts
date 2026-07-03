@@ -70,6 +70,7 @@ export type AppSettings = {
   theme: ThemeId;
   startDate: string;
   startTime: string;
+  targetDate: string;
   targetTime: string;
   welcomeLine: string;
   reducedMotion: boolean;
