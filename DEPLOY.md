@@ -83,28 +83,35 @@ npm start
 
 前端 GitHub Pages 會在 push 後自動更新。若也想讓 `cloud-api/` 後端自動部署到 Cloud Run，需要再設定一次 GitHub Actions secret。
 
-先在 Cloud Shell 建立部署用 service account：
+先在 Cloud Shell 建立部署用 service account。下面的 `YOUR_PROJECT_ID` 請換成你的 Google Cloud project id。
 
 ```bash
-gcloud config set project erudite-bloom-249605
+export PROJECT_ID="YOUR_PROJECT_ID"
+export DEPLOYER_SA="github-cloud-run-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud config set project "${PROJECT_ID}"
 
 gcloud iam service-accounts create github-cloud-run-deployer \
   --display-name="GitHub Cloud Run Deployer"
 
-gcloud projects add-iam-policy-binding erudite-bloom-249605 \
-  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOYER_SA}" \
   --role="roles/run.admin"
 
-gcloud projects add-iam-policy-binding erudite-bloom-249605 \
-  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOYER_SA}" \
   --role="roles/cloudbuild.builds.editor"
 
-gcloud projects add-iam-policy-binding erudite-bloom-249605 \
-  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOYER_SA}" \
   --role="roles/artifactregistry.writer"
 
-gcloud projects add-iam-policy-binding erudite-bloom-249605 \
-  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOYER_SA}" \
+  --role="roles/storage.admin"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${DEPLOYER_SA}" \
   --role="roles/iam.serviceAccountUser"
 ```
 
@@ -112,7 +119,7 @@ gcloud projects add-iam-policy-binding erudite-bloom-249605 \
 
 ```bash
 gcloud iam service-accounts keys create gcp-service-account-key.json \
-  --iam-account="github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com"
+  --iam-account="${DEPLOYER_SA}"
 
 cat gcp-service-account-key.json
 ```
@@ -120,6 +127,7 @@ cat gcp-service-account-key.json
 到 GitHub repo 的 `Settings -> Secrets and variables -> Actions -> Secrets` 新增：
 
 ```text
+APP_PASSWORD=<登入頁密碼>
 GCP_SERVICE_ACCOUNT_KEY=<貼上整份 gcp-service-account-key.json 內容>
 CLOUD_RUN_SESSION_SECRET=<貼上一段長隨機字串>
 ```
@@ -128,6 +136,15 @@ CLOUD_RUN_SESSION_SECRET=<貼上一段長隨機字串>
 
 ```bash
 openssl rand -base64 32
+```
+
+再到 GitHub repo 的 `Settings -> Secrets and variables -> Actions -> Variables` 新增：
+
+```text
+GCP_PROJECT_ID=<你的 Google Cloud project id>
+CLOUD_RUN_REGION=asia-east1
+CLOUD_RUN_SERVICE=yorke-miss-hhh-api
+CLOUD_RUN_ALLOWED_ORIGIN=https://tamyu321-source.github.io
 ```
 
 設定完成後，只要 push 的內容包含 `cloud-api/**`，`.github/workflows/deploy-cloud-run.yml` 就會自動部署 Cloud Run。也可以到 GitHub Actions 手動執行 `Deploy Cloud Run API`。
