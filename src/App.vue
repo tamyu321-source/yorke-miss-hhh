@@ -45,6 +45,7 @@ const OPENING_DURATION_MS = 6400;
 const OPENING_RETURN_DURATION_MS = 4600;
 const OPENING_SKIP_DURATION_MS = 620;
 const OPENING_REDUCED_DURATION_MS = 650;
+const SETTINGS_UPDATED_KIND = 'settings-updated-at';
 const BOY_NAME = '大笨蛋北七';
 const GIRL_NAME = '小笨蛋粽子';
 const defaultSettings: AppSettings = {
@@ -707,6 +708,7 @@ const passwordInput = ref('');
 const passwordStatus = ref('');
 const passwordBusy = ref(false);
 const passwordSuccess = ref(false);
+const cloudLoadingActive = ref(false);
 const cloudToken = ref('');
 const cloudStatus = ref('尚未同步');
 const cloudSyncBusy = ref(false);
@@ -721,6 +723,7 @@ let themeTransitionTimer: number | undefined;
 let themePreviewTimer: number | undefined;
 let milestoneTimer: number | undefined;
 let cloudSyncTimer: number | undefined;
+let pendingCloudSync = false;
 let deferredInstallPrompt: Event | null = null;
 let refreshingForUpdate = false;
 let sparkleId = 0;
@@ -929,6 +932,11 @@ const onboardingSteps = computed(() => [
   { title: '設定日期', text: '準備頁可以拖曳時間線，快速調整目標日期。' },
   { title: '今日儀式', text: '每天進今日頁，留下一個心情和一點光。' }
 ]);
+const cloudLoadingSteps = computed(() => [
+  { label: '確認暗號', done: Boolean(cloudToken.value) },
+  { label: '讀取設定', done: cloudStatus.value !== '正在載入雲端資料...' },
+  { label: '整理回憶', done: memoryPhotos.value.length > 0 || cloudStatus.value === '雲端還沒有資料，會用目前裝置建立第一份資料' }
+]);
 const ritualSteps = computed(() => [
   { id: 'open', label: '打開今日文案', done: ritualOpened.value },
   { id: 'fortune', label: '抽一張今日小籤', done: fortuneReady.value },
@@ -1080,12 +1088,13 @@ async function unlockApp() {
     passwordSuccess.value = true;
     passwordStatus.value = '暗號通過，正在打開今天。';
     await waitForPasswordSuccess();
+    passwordStatus.value = '正在載入雲端資料...';
+    await loadCloudData();
     appUnlocked.value = true;
     startOpeningSequence();
     passwordSuccess.value = false;
     passwordInput.value = '';
     passwordStatus.value = '';
-    await loadCloudData();
     startCloudSyncLoop();
   } catch {
     clearCloudSession();
@@ -1108,9 +1117,12 @@ function restoreSavedCloudSession() {
   if (!token) return;
 
   cloudToken.value = token;
-  appUnlocked.value = true;
-  startOpeningSequence();
-  void loadCloudData().then(startCloudSyncLoop).catch(() => {
+  void (async () => {
+    await loadCloudData();
+    appUnlocked.value = true;
+    startOpeningSequence();
+    startCloudSyncLoop();
+  })().catch(() => {
     clearCloudSession();
     cloudToken.value = '';
     appUnlocked.value = false;
@@ -1122,25 +1134,41 @@ async function loadCloudData() {
   if (!cloudToken.value) return;
 
   loadingCloudSnapshot = true;
+  cloudLoadingActive.value = true;
   cloudStatus.value = '正在載入雲端資料...';
+  let shouldPushLocalAfterCloudLoad = false;
 
   try {
-    const cloudData = await fetchCloudState(cloudToken.value);
-    if (cloudData) {
-      restoreAppLocalStorage(cloudData.localStorage, 'replace');
-      memoryPhotos.value = cloudData.photos;
-      await savePhotos(memoryPhotos.value);
-      reloadPersistentState();
-      cloudStatus.value = '已載入雲端資料';
-    } else {
-      cloudStatus.value = '雲端還沒有資料，會用目前裝置建立第一份資料';
+    try {
+      const cloudData = await fetchCloudState(cloudToken.value);
+      if (cloudData) {
+        const localSettings = localStorage.getItem(storageKey('settings'));
+        const localSettingsUpdatedAt = getLocalSettingsUpdatedAt();
+        const cloudSettingsUpdatedAt = getCloudSettingsUpdatedAt(cloudData);
+        restoreAppLocalStorage(cloudData.localStorage, 'replace');
+        if (localSettings && localSettingsUpdatedAt > cloudSettingsUpdatedAt) {
+          localStorage.setItem(storageKey('settings'), localSettings);
+          setSettingsUpdatedAt(localSettingsUpdatedAt);
+          shouldPushLocalAfterCloudLoad = true;
+        }
+        memoryPhotos.value = cloudData.photos;
+        await savePhotos(memoryPhotos.value);
+        reloadPersistentState();
+        cloudStatus.value = '已載入雲端資料';
+      } else {
+        cloudStatus.value = '雲端還沒有資料，會用目前裝置建立第一份資料';
+        shouldPushLocalAfterCloudLoad = true;
+      }
+      lastCloudSnapshot = getComparableCloudSnapshot();
+    } finally {
+      loadingCloudSnapshot = false;
     }
-    lastCloudSnapshot = getComparableCloudSnapshot();
-    if (!cloudData) {
+
+    if (shouldPushLocalAfterCloudLoad) {
       await syncCloudNow(true);
     }
   } finally {
-    loadingCloudSnapshot = false;
+    cloudLoadingActive.value = false;
   }
 }
 
@@ -1155,7 +1183,11 @@ function startCloudSyncLoop() {
 }
 
 async function syncCloudNow(force = false) {
-  if (!appUnlocked.value || !cloudToken.value || cloudSyncBusy.value || loadingCloudSnapshot) return;
+  if (!cloudToken.value || loadingCloudSnapshot) return;
+  if (cloudSyncBusy.value) {
+    pendingCloudSync = pendingCloudSync || force;
+    return;
+  }
 
   const snapshot = getComparableCloudSnapshot();
   if (!force && snapshot === lastCloudSnapshot) return;
@@ -1171,7 +1203,17 @@ async function syncCloudNow(force = false) {
     cloudStatus.value = '同步失敗，稍後會再試一次';
   } finally {
     cloudSyncBusy.value = false;
+    if (pendingCloudSync) {
+      pendingCloudSync = false;
+      window.setTimeout(() => {
+        void syncCloudNow(true);
+      }, 0);
+    }
   }
+}
+
+function requestCloudSync() {
+  void syncCloudNow(true);
 }
 
 function getComparableCloudSnapshot() {
@@ -1180,6 +1222,23 @@ function getComparableCloudSnapshot() {
     localStorage: data.localStorage,
     photos: data.photos
   });
+}
+
+function setSettingsUpdatedAt(timestamp = Date.now()) {
+  localStorage.setItem(storageKey(SETTINGS_UPDATED_KIND), String(timestamp));
+}
+
+function getLocalSettingsUpdatedAt() {
+  return getStorageTimestamp(localStorage.getItem(storageKey(SETTINGS_UPDATED_KIND)));
+}
+
+function getCloudSettingsUpdatedAt(data: AppExportData) {
+  return getStorageTimestamp(data.localStorage[storageKey(SETTINGS_UPDATED_KIND)]);
+}
+
+function getStorageTimestamp(value: string | null | undefined) {
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function lockApp() {
@@ -1201,12 +1260,14 @@ function toggleTask() {
 
   if (taskCompleted.value) {
     localStorage.setItem(key, 'done');
+    requestCloudSync();
     launchThemeBurst();
     gentleVibrate(12);
     return;
   }
 
   localStorage.removeItem(key);
+  requestCloudSync();
 }
 
 function loadDailyState(key: string) {
@@ -1233,23 +1294,27 @@ function saveDailyMessage() {
   if (message) {
     localStorage.setItem(storageKey('message', dateKey.value), message);
     dailyMessage.value = message;
+    requestCloudSync();
     gentleVibrate(10);
     return;
   }
 
   localStorage.removeItem(storageKey('message', dateKey.value));
   dailyMessage.value = '';
+  requestCloudSync();
 }
 
 function clearDailyMessage() {
   localStorage.removeItem(storageKey('message', dateKey.value));
   dailyMessage.value = '';
+  requestCloudSync();
 }
 
 function selectMood(moodId: string) {
   selectedMoodId.value = moodId;
   localStorage.setItem(storageKey('mood', dateKey.value), moodId);
   addMoodHistory(moodId);
+  requestCloudSync();
   gentleVibrate(8);
 }
 
@@ -1268,6 +1333,7 @@ function toggleSuitcaseItem(item: string) {
     packingItems.value = packingItems.value.filter((value) => value !== item);
   }, 620);
   localStorage.setItem(storageKey('suitcase'), JSON.stringify(suitcaseChecked.value));
+  requestCloudSync();
   gentleVibrate(8);
 }
 
@@ -1289,6 +1355,7 @@ function checkInToday() {
   if (checkedInToday.value) return;
   checkins.value = [...checkins.value, dateKey.value].sort();
   localStorage.setItem(storageKey('checkins'), JSON.stringify(checkins.value));
+  requestCloudSync();
   launchThemeBurst();
   gentleVibrate(16);
 }
@@ -1314,6 +1381,7 @@ function drawFortune() {
   fortuneLine.value = fortune.line;
   localStorage.setItem(storageKey('fortune-title', dateKey.value), fortune.title);
   localStorage.setItem(storageKey('fortune-line', dateKey.value), fortune.line);
+  requestCloudSync();
   gentleVibrate(14);
 }
 
@@ -1406,6 +1474,7 @@ function scanRadar() {
 function chooseRadar(choiceId: string) {
   radarChoiceId.value = choiceId;
   localStorage.setItem(storageKey('radar-choice', dateKey.value), choiceId);
+  requestCloudSync();
   playSoftSound('radar');
   gentleVibrate(14);
 }
@@ -1429,6 +1498,7 @@ function cancelSecretPress() {
 function revealSecret() {
   secretRevealed.value = true;
   localStorage.setItem(storageKey('secret', dateKey.value), 'open');
+  requestCloudSync();
   cancelSecretPress();
   launchThemeBurst();
   playSoftSound('secret');
@@ -1439,6 +1509,7 @@ function mailSecret() {
   if (!secretRevealed.value || secretMailed.value) return;
   secretMailed.value = true;
   localStorage.setItem(storageKey('secret-mailed', dateKey.value), 'yes');
+  requestCloudSync();
   playSoftSound('paper');
   gentleVibrate(12);
 }
@@ -1448,6 +1519,7 @@ function unlockSecretCode() {
   if (!secretCodeList.value.includes(normalized)) return;
   secretCodeUnlocked.value = true;
   localStorage.setItem(storageKey('secret-code'), 'open');
+  requestCloudSync();
   playSoftSound('secret');
   gentleVibrate(18);
 }
@@ -1462,11 +1534,13 @@ function addCustomSecretCode() {
   customSecretCodes.value = [...customSecretCodes.value, code];
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
   newSecretCode.value = '';
+  requestCloudSync();
 }
 
 function removeCustomSecretCode(code: string) {
   customSecretCodes.value = customSecretCodes.value.filter((item) => item !== code);
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
+  requestCloudSync();
 }
 
 function loadCustomSecretCodes() {
@@ -1488,16 +1562,19 @@ function saveDailyAnswer() {
   if (answer) {
     dailyAnswer.value = answer;
     localStorage.setItem(storageKey('question-answer', dateKey.value), answer);
+    requestCloudSync();
     gentleVibrate(10);
     return;
   }
 
   localStorage.removeItem(storageKey('question-answer', dateKey.value));
+  requestCloudSync();
 }
 
 function clearDailyAnswer() {
   dailyAnswer.value = '';
   localStorage.removeItem(storageKey('question-answer', dateKey.value));
+  requestCloudSync();
 }
 
 function addMemoryPhotos(event: Event) {
@@ -1535,6 +1612,7 @@ function removeMemoryPhoto(id: string) {
 
 async function saveMemoryPhotos() {
   await savePhotos(memoryPhotos.value);
+  requestCloudSync();
 }
 
 async function loadMemoryPhotos() {
@@ -1566,6 +1644,7 @@ function toggleMeetingChecklist(item: string) {
   }
   meetingChecklist.value = Array.from(checked);
   localStorage.setItem(storageKey('meeting-checklist'), JSON.stringify(meetingChecklist.value));
+  requestCloudSync();
   gentleVibrate(10);
 }
 
@@ -1664,11 +1743,13 @@ function resetToday() {
     localStorage.removeItem(storageKey('meeting-checklist'));
   }
   loadDailyState(dateKey.value);
+  requestCloudSync();
 }
 
 function openTodayRitual() {
   ritualOpened.value = true;
   localStorage.setItem(storageKey('ritual-opened', dateKey.value), 'yes');
+  requestCloudSync();
   gentleVibrate(10);
 }
 
@@ -1676,6 +1757,7 @@ function completeTodayRitual() {
   if (ritualProgress.value < 100) return;
   ritualComplete.value = true;
   localStorage.setItem(storageKey('ritual-complete', dateKey.value), 'yes');
+  requestCloudSync();
   launchSparkles();
 }
 
@@ -1708,6 +1790,7 @@ function saveSettings() {
   previewTheme.value = '';
   if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
   localStorage.setItem(storageKey('settings'), JSON.stringify(next));
+  setSettingsUpdatedAt();
   if (previousTheme !== next.theme) {
     themeTransition.value = true;
     if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
@@ -1715,6 +1798,7 @@ function saveSettings() {
       themeTransition.value = false;
     }, 900);
   }
+  requestCloudSync();
   gentleVibrate(10);
 }
 
@@ -1723,6 +1807,8 @@ function resetSettings() {
   settingsDraft.value = { ...defaultSettings };
   previewTheme.value = '';
   localStorage.removeItem(storageKey('settings'));
+  setSettingsUpdatedAt();
+  requestCloudSync();
 }
 
 function previewThemeSelection(theme: ThemeId) {
@@ -1742,6 +1828,7 @@ function previewThemeSelection(theme: ThemeId) {
 function dismissOnboarding() {
   onboardingVisible.value = false;
   localStorage.setItem(storageKey('onboarding-seen'), 'yes');
+  requestCloudSync();
 }
 
 function dismissUpdateToast() {
@@ -1805,6 +1892,7 @@ function removeWish(id: string) {
 
 function saveWishes() {
   localStorage.setItem(storageKey('wishes'), JSON.stringify(wishes.value));
+  requestCloudSync();
 }
 
 function loadWishes() {
@@ -1835,6 +1923,7 @@ function toggleMeetingMoment(id: string) {
   }
   meetingMoments.value = Array.from(selected);
   localStorage.setItem(storageKey('meeting-moments'), JSON.stringify(meetingMoments.value));
+  requestCloudSync();
 }
 
 function loadMeetingMoments() {
@@ -2286,11 +2375,29 @@ function clamp(value: number, min: number, max: number) {
       <span v-for="light in theaterLights" :key="`sky-${light.id}`" class="sky-star" :style="{ left: light.left, top: light.top, animationDelay: light.delay }"></span>
     </div>
 
-    <section v-if="!appUnlocked" class="password-gate" aria-labelledby="password-gate-title">
-      <p class="eyebrow">第一次見面倒數</p>
-      <h1 id="password-gate-title">先說暗號</h1>
-      <p class="password-hint">提示：小笨蛋生日</p>
-      <form class="password-form" @submit.prevent="unlockApp">
+    <section v-if="!appUnlocked" class="password-gate" :class="{ 'cloud-loading': cloudLoadingActive }" aria-labelledby="password-gate-title">
+      <template v-if="cloudLoadingActive">
+        <div class="cloud-loading-panel" role="status" aria-live="polite">
+          <span class="cloud-loading-orbit" aria-hidden="true">
+            <i></i>
+            <i></i>
+            <i></i>
+          </span>
+          <p class="eyebrow">雲端同步</p>
+          <h1 id="password-gate-title">正在把今天準備好</h1>
+          <p>{{ cloudStatus }}</p>
+          <div class="cloud-loading-steps">
+            <span v-for="step in cloudLoadingSteps" :key="step.label" :class="{ done: step.done }">
+              {{ step.done ? '✓' : '•' }} {{ step.label }}
+            </span>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <p class="eyebrow">第一次見面倒數</p>
+        <h1 id="password-gate-title">先說暗號</h1>
+        <p class="password-hint">提示：小笨蛋生日</p>
+        <form class="password-form" @submit.prevent="unlockApp">
         <input
           v-model="passwordInput"
           inputmode="numeric"
@@ -2302,12 +2409,13 @@ function clamp(value: number, min: number, max: number) {
         <button class="soft-button" type="submit" :disabled="passwordBusy">
           {{ passwordBusy ? '確認中...' : '進入' }}
         </button>
-      </form>
-      <div v-if="passwordSuccess" class="password-success" aria-live="polite">
-        <span aria-hidden="true"></span>
-        <strong>暗號通過</strong>
-      </div>
-      <p class="password-status">{{ passwordStatus || cloudStatus }}</p>
+        </form>
+        <div v-if="passwordSuccess" class="password-success" aria-live="polite">
+          <span aria-hidden="true"></span>
+          <strong>暗號通過</strong>
+        </div>
+        <p class="password-status">{{ passwordStatus || cloudStatus }}</p>
+      </template>
     </section>
 
     <template v-else>
