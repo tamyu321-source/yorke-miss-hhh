@@ -56,7 +56,8 @@ const defaultSettings: AppSettings = {
   targetDate: '2026-08-14',
   targetTime: '18:00',
   welcomeLine: '把倒數放慢一點，讓見面自己靠近。',
-  reducedMotion: false
+  reducedMotion: false,
+  soundFeedback: true
 };
 
 const themeOptions: Array<{ id: ThemeId; label: string }> = [
@@ -682,6 +683,8 @@ const pendingImport = ref<AppExportData | null>(null);
 const importMode = ref<'merge' | 'replace'>('merge');
 const settings = ref<AppSettings>({ ...defaultSettings });
 const settingsDraft = ref<AppSettings>({ ...defaultSettings });
+const previewTheme = ref<ThemeId | ''>('');
+const onboardingVisible = ref(false);
 const ritualOpened = ref(false);
 const ritualComplete = ref(false);
 const shareCopied = ref(false);
@@ -715,6 +718,7 @@ let planeResetTimer: number | undefined;
 let introTimer: number | undefined;
 let passwordSuccessTimer: number | undefined;
 let themeTransitionTimer: number | undefined;
+let themePreviewTimer: number | undefined;
 let milestoneTimer: number | undefined;
 let cloudSyncTimer: number | undefined;
 let deferredInstallPrompt: Event | null = null;
@@ -747,6 +751,8 @@ const currentDayIndex = computed(() => clamp(rawDayIndex.value, 0, journeyDays.v
 const targetDayStart = computed(() => startOfDay(targetDate.value));
 const isMeetingDay = computed(() => todayStart.value.getTime() >= targetDayStart.value.getTime());
 const countdown = computed<Countdown>(() => getCountdown(now.value, targetDate.value));
+const daysUntilMeeting = computed(() => Math.ceil(Math.max(targetDate.value.getTime() - now.value.getTime(), 0) / DAY_MS));
+const isArrivalMode = computed(() => !isMeetingDay.value && daysUntilMeeting.value <= 7);
 const progress = computed(() => {
   const total = targetDate.value.getTime() - configuredStartDate.value.getTime();
   const elapsed = now.value.getTime() - configuredStartDate.value.getTime();
@@ -773,6 +779,29 @@ const planeTrailStyle = computed(() => {
 });
 const routeFillStyle = computed(() => ({
   width: `${progressPercent.value}%`
+}));
+const draftStartDate = computed(() => {
+  const [year, month, day] = parseDateSetting(settingsDraft.value.startDate);
+  const [hours, minutes] = parseClockTime(settingsDraft.value.startTime, defaultSettings.startTime);
+  return new Date(year, month - 1, day, hours, minutes, 0);
+});
+const draftTargetDate = computed(() => {
+  const [year, month, day] = parseDateSetting(settingsDraft.value.targetDate, defaultSettings.targetDate);
+  const [hours, minutes] = parseClockTime(settingsDraft.value.targetTime, defaultSettings.targetTime);
+  return new Date(year, month - 1, day, hours, minutes, 0);
+});
+const targetOffsetMax = computed(() => Math.max(30, Math.ceil((draftTargetDate.value.getTime() - draftStartDate.value.getTime()) / DAY_MS) + 30));
+const targetOffsetDays = computed({
+  get() {
+    return clamp(Math.round((startOfDay(draftTargetDate.value).getTime() - startOfDay(draftStartDate.value).getTime()) / DAY_MS), 1, targetOffsetMax.value);
+  },
+  set(value: number) {
+    const nextDate = addDays(startOfDay(draftStartDate.value), Number(value));
+    settingsDraft.value.targetDate = formatDateKey(nextDate);
+  }
+});
+const targetTimelineStyle = computed(() => ({
+  width: `${clamp((targetOffsetDays.value / targetOffsetMax.value) * 100, 0, 100)}%`
 }));
 const dateKey = computed(() => formatDateKey(todayStart.value));
 const todayJourney = computed(() => journeyDays.value[currentDayIndex.value]);
@@ -830,6 +859,13 @@ const radarChoiceResult = computed(() => radarChoices.find((choice) => choice.id
 const meetingChecklistProgress = computed(() =>
   Math.round((meetingChecklist.value.length / meetingChecklistItems.length) * 100)
 );
+const arrivalSteps = computed(() => [
+  { label: '行李', done: suitcaseProgress.value >= 80 },
+  { label: '心情', done: Boolean(selectedMoodId.value) },
+  { label: '想說的話', done: Boolean(dailyMessage.value.trim()) },
+  { label: '見面瞬間', done: meetingMoments.value.length >= 2 }
+]);
+const arrivalReadyPercent = computed(() => Math.round((arrivalSteps.value.filter((step) => step.done).length / arrivalSteps.value.length) * 100));
 const theaterLights = computed(() =>
   Array.from({ length: 18 }, (_, index) => ({
     id: index,
@@ -864,12 +900,20 @@ const backgroundBeams = computed(() =>
   }))
 );
 const secretCodeList = computed(() => [...defaultSecretCodes, ...customSecretCodes.value]);
+const photoFilmstrip = computed(() =>
+  memoryPhotos.value.map((photo, index) => ({
+    ...photo,
+    dateLabel: formatMonthDay(addDays(configuredStartDay.value, index)),
+    rotate: `${(index % 5) - 2}deg`
+  }))
+);
 const displayBoyName = computed(() => settings.value.boyName.trim() || BOY_NAME);
 const displayGirlName = computed(() => settings.value.girlName.trim() || GIRL_NAME);
 const startDateLabel = computed(() => `${settings.value.startDate} ${settings.value.startTime}`);
 const targetDateLabel = computed(() => `${settings.value.targetDate} ${settings.value.targetTime}`);
 const targetDateShortLabel = computed(() => settings.value.targetDate.replace(/-/g, '.'));
-const themeClass = computed(() => `theme-${settings.value.theme}`);
+const themeClass = computed(() => `theme-${previewTheme.value || settings.value.theme}`);
+const themePreviewing = computed(() => Boolean(previewTheme.value));
 const openingThemeLabel = computed(() => {
   if (settings.value.theme === 'mint') return '清風啟程';
   if (settings.value.theme === 'night') return '夜航啟動';
@@ -880,6 +924,11 @@ const openingChapters = computed(() =>
     ? ['暗號通過', '同步回憶', '校準航線', '打開今天']
     : ['歡迎回來', '更新今日', '校準距離', '回到倒數']
 );
+const onboardingSteps = computed(() => [
+  { title: '換氛圍', text: '右上角可以直接去切換暖光、清風或夜航。' },
+  { title: '設定日期', text: '準備頁可以拖曳時間線，快速調整目標日期。' },
+  { title: '今日儀式', text: '每天進今日頁，留下一個心情和一點光。' }
+]);
 const ritualSteps = computed(() => [
   { id: 'open', label: '打開今日文案', done: ritualOpened.value },
   { id: 'fortune', label: '抽一張今日小籤', done: fortuneReady.value },
@@ -1000,6 +1049,7 @@ onUnmounted(() => {
   if (introTimer) window.clearTimeout(introTimer);
   if (passwordSuccessTimer) window.clearTimeout(passwordSuccessTimer);
   if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
+  if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
   if (milestoneTimer) window.clearTimeout(milestoneTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
   window.removeEventListener('online', updateOnlineState);
@@ -1650,10 +1700,13 @@ function saveSettings() {
     targetDate: normalizeDateSetting(settingsDraft.value.targetDate, defaultSettings.targetDate),
     targetTime: normalizeClockTime(settingsDraft.value.targetTime, defaultSettings.targetTime),
     welcomeLine: settingsDraft.value.welcomeLine.trim() || defaultSettings.welcomeLine,
-    reducedMotion: settingsDraft.value.reducedMotion
+    reducedMotion: settingsDraft.value.reducedMotion,
+    soundFeedback: settingsDraft.value.soundFeedback
   };
   settings.value = next;
   settingsDraft.value = { ...next };
+  previewTheme.value = '';
+  if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
   localStorage.setItem(storageKey('settings'), JSON.stringify(next));
   if (previousTheme !== next.theme) {
     themeTransition.value = true;
@@ -1668,7 +1721,31 @@ function saveSettings() {
 function resetSettings() {
   settings.value = { ...defaultSettings };
   settingsDraft.value = { ...defaultSettings };
+  previewTheme.value = '';
   localStorage.removeItem(storageKey('settings'));
+}
+
+function previewThemeSelection(theme: ThemeId) {
+  settingsDraft.value.theme = theme;
+  previewTheme.value = theme;
+  themeTransition.value = true;
+  if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
+  if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
+  themeTransitionTimer = window.setTimeout(() => {
+    themeTransition.value = false;
+  }, 900);
+  themePreviewTimer = window.setTimeout(() => {
+    previewTheme.value = '';
+  }, 2000);
+}
+
+function dismissOnboarding() {
+  onboardingVisible.value = false;
+  localStorage.setItem(storageKey('onboarding-seen'), 'yes');
+}
+
+function dismissUpdateToast() {
+  updateReady.value = false;
 }
 
 function loadSettings() {
@@ -1689,7 +1766,8 @@ function loadSettings() {
       startTime: normalizeClockTime(parsed.startTime ?? defaultSettings.startTime, defaultSettings.startTime),
       targetDate: normalizeDateSetting(parsed.targetDate ?? defaultSettings.targetDate, defaultSettings.targetDate),
       targetTime: normalizeClockTime(parsed.targetTime ?? defaultSettings.targetTime, defaultSettings.targetTime),
-      reducedMotion: Boolean(parsed.reducedMotion)
+      reducedMotion: Boolean(parsed.reducedMotion),
+      soundFeedback: parsed.soundFeedback ?? defaultSettings.soundFeedback
     };
     settings.value = loaded;
     settingsDraft.value = { ...loaded };
@@ -1843,6 +1921,7 @@ function exportMeetingCalendar() {
 }
 
 function playSoftSound(kind: 'paper' | 'secret' | 'radar') {
+  if (!settings.value.soundFeedback) return;
   const audioWindow = window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
   const AudioContextCtor = window.AudioContext || audioWindow.webkitAudioContext;
   if (!AudioContextCtor) return;
@@ -2077,6 +2156,9 @@ function finishOpening() {
   }
   introClosing.value = false;
   introActive.value = false;
+  if (localStorage.getItem(storageKey('onboarding-seen')) !== 'yes') {
+    onboardingVisible.value = true;
+  }
 }
 
 function startOpeningSequence() {
@@ -2126,6 +2208,23 @@ function clamp(value: number, min: number, max: number) {
         class="theme-burst"
         :style="{ '--burst-x': `${particle.x}px`, '--burst-y': `${particle.y}px`, animationDelay: particle.delay }"
       ></span>
+    </div>
+    <div v-if="updateReady" class="pwa-update-toast" role="status">
+      <span aria-hidden="true"></span>
+      <div>
+        <strong>新版本準備好了</strong>
+        <p>套用後會帶著最新動畫重新打開。</p>
+      </div>
+      <button type="button" @click="refreshForUpdate">更新</button>
+      <button type="button" aria-label="稍後再說" @click="dismissUpdateToast">×</button>
+    </div>
+    <div v-if="onboardingVisible && !introActive" class="onboarding-layer" role="dialog" aria-label="快速導覽">
+      <article v-for="step in onboardingSteps" :key="step.title">
+        <span aria-hidden="true"></span>
+        <strong>{{ step.title }}</strong>
+        <p>{{ step.text }}</p>
+      </article>
+      <button class="soft-button" type="button" @click="dismissOnboarding">開始使用</button>
     </div>
 
     <button
@@ -2271,6 +2370,22 @@ function clamp(value: number, min: number, max: number) {
       <p class="welcome-line">{{ settings.welcomeLine }}</p>
     </section>
 
+    <section v-if="isArrivalMode" v-show="activeTab === 'countdown'" class="arrival-mode-section" aria-labelledby="arrival-mode-title">
+      <div>
+        <p class="section-kicker">最後 {{ daysUntilMeeting }} 天</p>
+        <h2 id="arrival-mode-title">抵達模式已啟動</h2>
+      </div>
+      <div class="arrival-ready-ring">
+        <strong>{{ arrivalReadyPercent }}%</strong>
+        <span>準備完成</span>
+      </div>
+      <div class="arrival-mode-grid">
+        <span v-for="step in arrivalSteps" :key="step.label" :class="{ done: step.done }">
+          {{ step.done ? '✓' : '+' }} {{ step.label }}
+        </span>
+      </div>
+    </section>
+
     <section v-show="activeTab === 'countdown'" class="flight-section" aria-label="台南飛向上海">
       <div class="section-heading">
         <span>台南</span>
@@ -2356,6 +2471,11 @@ function clamp(value: number, min: number, max: number) {
       <div>
         <p class="section-kicker">PWA 狀態</p>
         <h2 id="pwa-title">{{ isOnline ? '目前在線上' : '目前離線' }}</h2>
+      </div>
+      <div class="offline-cosmos" :class="{ online: isOnline }">
+        <span aria-hidden="true"></span>
+        <strong>{{ isOnline ? '同步小宇宙在線' : '離線小宇宙已啟動' }}</strong>
+        <p>{{ isOnline ? '照片、設定和今日狀態可以繼續同步。' : '倒數、回憶、設定仍可打開，網路回來後再同步。' }}</p>
       </div>
       <p>{{ isOnline ? '安裝後也可以離線打開，等網路回來會繼續更新。' : '已離線，仍可以打開已快取的倒數頁。' }}</p>
       <button v-if="installReady" class="soft-button" type="button" @click="installApp">安裝到手機</button>
@@ -2560,6 +2680,19 @@ function clamp(value: number, min: number, max: number) {
         <input type="file" accept="image/*" multiple @change="addMemoryPhotos" />
         加入照片
       </label>
+      <div v-if="photoFilmstrip.length" class="photo-filmstrip" aria-label="回憶膠卷">
+        <figure
+          v-for="photo in photoFilmstrip"
+          :key="`film-${photo.id}`"
+          :style="{ '--film-rotate': photo.rotate }"
+        >
+          <img :src="photo.dataUrl" :alt="photo.name" />
+          <figcaption>
+            <strong>{{ photo.dateLabel }}</strong>
+            <span>{{ photo.name }}</span>
+          </figcaption>
+        </figure>
+      </div>
       <div v-if="memoryPhotos.length" class="photo-grid">
         <figure v-for="photo in memoryPhotos" :key="photo.id">
           <img :src="photo.dataUrl" :alt="photo.name" />
@@ -2696,6 +2829,17 @@ function clamp(value: number, min: number, max: number) {
           <input v-model="settingsDraft.targetTime" inputmode="numeric" maxlength="5" placeholder="18:00" />
         </label>
       </div>
+      <div class="date-timeline-control">
+        <div>
+          <span>{{ settingsDraft.startDate }}</span>
+          <strong>{{ targetOffsetDays }} 天後見面</strong>
+          <span>{{ settingsDraft.targetDate }}</span>
+        </div>
+        <label>
+          <span :style="targetTimelineStyle" aria-hidden="true"></span>
+          <input v-model.number="targetOffsetDays" type="range" min="1" :max="targetOffsetMax" />
+        </label>
+      </div>
       <label class="welcome-setting">
         <span>首頁小句子</span>
         <textarea v-model="settingsDraft.welcomeLine" maxlength="42"></textarea>
@@ -2711,14 +2855,19 @@ function clamp(value: number, min: number, max: number) {
           class="ghost-button"
           :class="{ selected: settingsDraft.theme === theme.id }"
           type="button"
-          @click="settingsDraft.theme = theme.id"
+          @click="previewThemeSelection(theme.id)"
         >
           {{ theme.label }}
         </button>
       </div>
+      <p v-if="themePreviewing" class="theme-preview-note">預覽中，保存後才會固定使用這個主題。</p>
       <label class="toggle-row">
         <input v-model="settingsDraft.reducedMotion" type="checkbox" />
         <span>減少動畫</span>
+      </label>
+      <label class="toggle-row">
+        <input v-model="settingsDraft.soundFeedback" type="checkbox" />
+        <span>互動音效</span>
       </label>
       <div class="settings-actions">
         <button class="soft-button" type="button" @click="saveSettings">保存設定</button>

@@ -74,6 +74,7 @@ export type AppSettings = {
   targetTime: string;
   welcomeLine: string;
   reducedMotion: boolean;
+  soundFeedback: boolean;
 };
 
 export type WishItem = {
