@@ -41,7 +41,7 @@ button {
   width: min(100%, 440px);
   min-height: 100svh;
   margin: 0 auto;
-  padding: calc(env(safe-area-inset-top) + 18px) 18px calc(env(safe-area-inset-bottom) + 94px);
+  padding: max(10px, calc(env(safe-area-inset-top) - 42px)) 18px calc(env(safe-area-inset-bottom) + 94px);
   --scene-tilt-x: 0deg;
   --scene-tilt-y: 0deg;
 }
@@ -144,11 +144,13 @@ button {
 .cloud-loading-panel {
   position: relative;
   display: grid;
-  gap: 12px;
+  grid-template-columns: 88px 1fr;
+  gap: 10px 14px;
+  align-items: center;
   overflow: hidden;
-  padding: 22px;
+  padding: 16px;
   border: 1px solid rgba(117, 183, 197, 0.24);
-  border-radius: 22px;
+  border-radius: 20px;
   background:
     radial-gradient(circle at 78% 18%, rgba(246, 200, 111, 0.22), transparent 72px),
     radial-gradient(circle at 12% 88%, rgba(143, 211, 224, 0.24), transparent 92px),
@@ -159,8 +161,9 @@ button {
 }
 
 .cloud-loading-panel h1 {
-  max-width: 9ch;
-  font-size: clamp(2rem, 12vw, 3.7rem);
+  max-width: none;
+  font-size: clamp(1.45rem, 7.5vw, 2.2rem);
+  line-height: 1.08;
 }
 
 .cloud-loading-panel p:not(.eyebrow) {
@@ -173,8 +176,9 @@ button {
 .cloud-loading-orbit {
   position: relative;
   display: grid;
-  width: 112px;
-  height: 112px;
+  grid-row: 1 / span 3;
+  width: 84px;
+  height: 84px;
   place-items: center;
   margin-bottom: 4px;
   border-radius: 50%;
@@ -186,8 +190,8 @@ button {
 }
 
 .cloud-loading-orbit::before {
-  width: 42px;
-  height: 42px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: linear-gradient(135deg, #243047, #75b7c5);
   box-shadow: 0 0 28px rgba(117, 183, 197, 0.28);
@@ -205,44 +209,69 @@ button {
 }
 
 .cloud-loading-orbit i:nth-child(1) {
-  left: 16px;
-  top: 32px;
+  left: 12px;
+  top: 23px;
 }
 
 .cloud-loading-orbit i:nth-child(2) {
-  right: 20px;
-  top: 72px;
+  right: 15px;
+  top: 53px;
   background: #f6c86f;
 }
 
 .cloud-loading-orbit i:nth-child(3) {
-  left: 54px;
-  bottom: 8px;
+  left: 40px;
+  bottom: 7px;
   background: #8fd3e0;
 }
 
 .cloud-loading-steps {
   display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 4px;
 }
 
 .cloud-loading-steps span {
   display: grid;
-  min-height: 34px;
-  grid-template-columns: 24px 1fr;
-  align-items: center;
-  padding: 0 12px;
+  min-height: 32px;
+  place-items: center;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgba(36, 48, 71, 0.07);
   color: #637084;
-  font-size: 0.84rem;
+  font-size: 0.75rem;
   font-weight: 900;
+  text-align: center;
 }
 
 .cloud-loading-steps span.done {
   background: #e8f7f3;
   color: #417c73;
+}
+
+.cloud-loading-actions {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 7px;
+}
+
+.local-data-button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #243047, #526174);
+  color: #fffaf7;
+  font-weight: 900;
+}
+
+.cloud-loading-actions small {
+  color: #637084;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .motion-sky {
@@ -1150,6 +1179,7 @@ button {
 .app-shell.theme-night .summary-grid article,
 .app-shell.theme-night .import-preview,
 .app-shell.theme-night .offline-cosmos,
+.app-shell.theme-night .install-guide-card,
 .app-shell.theme-night .photo-filmstrip figure,
 .app-shell.theme-night .photo-grid figure,
 .app-shell.theme-night .date-timeline-control,
@@ -1204,6 +1234,8 @@ button {
 .app-shell.theme-night .timeline-card p,
 .app-shell.theme-night .daily-receipt pre,
 .app-shell.theme-night .offline-cosmos p,
+.app-shell.theme-night .install-guide-card p,
+.app-shell.theme-night .install-guide-card ol,
 .app-shell.theme-night .pwa-status-section p:not(.section-kicker) {
   color: var(--night-text);
 }
@@ -1283,6 +1315,10 @@ button {
   color: #c8f1e6;
 }
 
+.app-shell.theme-night .install-guide-card.installed {
+  background: rgba(120, 200, 181, 0.18);
+}
+
 .app-shell.theme-night .photo-filmstrip figcaption span {
   color: var(--night-muted);
 }
@@ -1302,7 +1338,8 @@ button {
 }
 
 .app-shell.theme-night .cloud-loading-panel p:not(.eyebrow),
-.app-shell.theme-night .cloud-loading-steps span {
+.app-shell.theme-night .cloud-loading-steps span,
+.app-shell.theme-night .cloud-loading-actions small {
   color: var(--night-muted);
 }
 
@@ -1320,6 +1357,11 @@ button {
 .app-shell.theme-night .cloud-loading-steps span.done {
   background: rgba(120, 200, 181, 0.22);
   color: #c8f1e6;
+}
+
+.app-shell.theme-night .local-data-button {
+  background: linear-gradient(135deg, var(--night-cyan), var(--night-teal));
+  color: #0f1928;
 }
 
 .app-shell.theme-night .section-heading {
@@ -2012,6 +2054,42 @@ button {
   grid-column: 2;
   margin-top: -2px;
   font-size: 0.82rem;
+}
+
+.install-guide-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(36, 48, 71, 0.08);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 92% 20%, rgba(246, 200, 111, 0.16), transparent 64px),
+    rgba(255, 250, 247, 0.72);
+}
+
+.install-guide-card strong {
+  color: #243047;
+  font-size: 0.96rem;
+  line-height: 1.3;
+}
+
+.install-guide-card p {
+  font-size: 0.84rem;
+}
+
+.install-guide-card ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  color: #526174;
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.install-guide-card.installed {
+  background: #e8f7f3;
 }
 
 .summary-grid {

@@ -677,6 +677,7 @@ const activeTab = ref<ActiveTab>('countdown');
 const capsuleShowAll = ref(false);
 const isOnline = ref(navigator.onLine);
 const installReady = ref(false);
+const installedDisplayMode = ref(false);
 const customSecretCodes = ref<string[]>([]);
 const newSecretCode = ref('');
 const importMessage = ref('');
@@ -709,6 +710,7 @@ const passwordStatus = ref('');
 const passwordBusy = ref(false);
 const passwordSuccess = ref(false);
 const cloudLoadingActive = ref(false);
+const localDataMode = ref(false);
 const cloudToken = ref('');
 const cloudStatus = ref('尚未同步');
 const cloudSyncBusy = ref(false);
@@ -731,6 +733,8 @@ let burstId = 0;
 let previousProgressMilestone = 0;
 let lastCloudSnapshot = '';
 let loadingCloudSnapshot = false;
+let cloudLoadRequestId = 0;
+let localCloudFallbackRequested = false;
 
 const todayStart = computed(() => startOfDay(now.value));
 const configuredStartDate = computed(() => {
@@ -937,6 +941,41 @@ const cloudLoadingSteps = computed(() => [
   { label: '讀取設定', done: cloudStatus.value !== '正在載入雲端資料...' },
   { label: '整理回憶', done: memoryPhotos.value.length > 0 || cloudStatus.value === '雲端還沒有資料，會用目前裝置建立第一份資料' }
 ]);
+const isIosDevice = computed(() => {
+  const platform = navigator.platform || '';
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+});
+const pwaInstallGuide = computed(() => {
+  if (installedDisplayMode.value) {
+    return {
+      title: '已經像 App 一樣打開',
+      text: '現在是主畫面模式，可以直接離線回到倒數。',
+      steps: [] as string[]
+    };
+  }
+
+  if (installReady.value) {
+    return {
+      title: '可以安裝到手機',
+      text: '這個瀏覽器支援一鍵安裝，按下方按鈕就能加入桌面。',
+      steps: [] as string[]
+    };
+  }
+
+  if (isIosDevice.value) {
+    return {
+      title: 'iPhone / iPad 需要手動加入',
+      text: 'Safari 不會自動彈出安裝提示，請用分享選單加入主畫面。',
+      steps: ['點 Safari 底部分享按鈕', '選擇「加入主畫面」', '按「加入」完成安裝']
+    };
+  }
+
+  return {
+    title: '瀏覽器沒有開放安裝提示',
+    text: '可以從瀏覽器選單尋找「安裝 App」或「加入主畫面」。',
+    steps: ['確認網址使用 HTTPS', '用 Chrome 或 Edge 開啟', '從瀏覽器選單安裝']
+  };
+});
 const ritualSteps = computed(() => [
   { id: 'open', label: '打開今日文案', done: ritualOpened.value },
   { id: 'fortune', label: '抽一張今日小籤', done: fortuneReady.value },
@@ -1043,8 +1082,10 @@ onMounted(() => {
   window.addEventListener('online', updateOnlineState);
   window.addEventListener('offline', updateOnlineState);
   window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  window.addEventListener('appinstalled', handleAppInstalled);
   window.addEventListener('pointermove', updateSceneTilt);
   navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange);
+  updateInstalledDisplayMode();
   timer = window.setInterval(() => {
     now.value = new Date();
   }, 1_000);
@@ -1063,6 +1104,7 @@ onUnmounted(() => {
   window.removeEventListener('online', updateOnlineState);
   window.removeEventListener('offline', updateOnlineState);
   window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  window.removeEventListener('appinstalled', handleAppInstalled);
   window.removeEventListener('pointermove', updateSceneTilt);
   navigator.serviceWorker?.removeEventListener('controllerchange', handleControllerChange);
   cancelSecretPress();
@@ -1107,11 +1149,9 @@ async function unlockApp() {
     cloudStatus.value = '暗號已通過，但雲端資料暫時載入失敗。';
     passwordStatus.value = '暗號已通過，但雲端資料暫時載入失敗。';
   } finally {
-    appUnlocked.value = true;
-    startOpeningSequence();
+    enterUnlockedApp(!localDataMode.value);
     passwordSuccess.value = false;
     passwordInput.value = '';
-    startCloudSyncLoop();
     passwordBusy.value = false;
   }
 }
@@ -1128,9 +1168,7 @@ function restoreSavedCloudSession() {
   cloudToken.value = token;
   void (async () => {
     await loadCloudData();
-    appUnlocked.value = true;
-    startOpeningSequence();
-    startCloudSyncLoop();
+    enterUnlockedApp(!localDataMode.value);
   })().catch(() => {
     clearCloudSession();
     cloudToken.value = '';
@@ -1139,9 +1177,22 @@ function restoreSavedCloudSession() {
   });
 }
 
+function enterUnlockedApp(startSync: boolean) {
+  if (!appUnlocked.value) {
+    appUnlocked.value = true;
+    startOpeningSequence();
+  }
+  if (startSync) {
+    startCloudSyncLoop();
+  }
+}
+
 async function loadCloudData() {
   if (!cloudToken.value) return;
 
+  const requestId = ++cloudLoadRequestId;
+  localCloudFallbackRequested = false;
+  localDataMode.value = false;
   loadingCloudSnapshot = true;
   cloudLoadingActive.value = true;
   cloudStatus.value = '正在載入雲端資料...';
@@ -1150,6 +1201,7 @@ async function loadCloudData() {
   try {
     try {
       const cloudData = await fetchCloudState(cloudToken.value);
+      if (localCloudFallbackRequested || requestId !== cloudLoadRequestId) return;
       if (cloudData) {
         const localSettings = localStorage.getItem(storageKey('settings'));
         const localSettingsUpdatedAt = getLocalSettingsUpdatedAt();
@@ -1181,6 +1233,19 @@ async function loadCloudData() {
   }
 }
 
+function useLocalDataForThisSession() {
+  localCloudFallbackRequested = true;
+  cloudLoadRequestId += 1;
+  localDataMode.value = true;
+  loadingCloudSnapshot = false;
+  cloudLoadingActive.value = false;
+  cloudStatus.value = '已使用本地資料，雲端同步暫停';
+  passwordStatus.value = '';
+  passwordBusy.value = false;
+  passwordSuccess.value = false;
+  enterUnlockedApp(false);
+}
+
 function startCloudSyncLoop() {
   if (cloudSyncTimer) return;
   cloudSyncTimer = window.setInterval(() => {
@@ -1206,6 +1271,7 @@ async function syncCloudNow(force = false) {
 
   try {
     await saveCloudState(cloudToken.value, createExportData(memoryPhotos.value));
+    localDataMode.value = false;
     lastCloudSnapshot = snapshot;
     cloudStatus.value = `已同步 ${new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`;
   } catch {
@@ -1222,6 +1288,7 @@ async function syncCloudNow(force = false) {
 }
 
 function requestCloudSync() {
+  if (localDataMode.value) return;
   void syncCloudNow(true);
 }
 
@@ -1959,12 +2026,24 @@ function handleBeforeInstallPrompt(event: Event) {
   installReady.value = true;
 }
 
+function handleAppInstalled() {
+  deferredInstallPrompt = null;
+  installReady.value = false;
+  installedDisplayMode.value = true;
+}
+
+function updateInstalledDisplayMode() {
+  const standaloneNavigator = navigator as Navigator & { standalone?: boolean };
+  installedDisplayMode.value = window.matchMedia('(display-mode: standalone)').matches || standaloneNavigator.standalone === true;
+}
+
 async function installApp() {
   const promptEvent = deferredInstallPrompt as (Event & { prompt?: () => Promise<void> }) | null;
   if (!promptEvent?.prompt) return;
   await promptEvent.prompt();
   deferredInstallPrompt = null;
   installReady.value = false;
+  updateInstalledDisplayMode();
 }
 
 async function checkForAppUpdate() {
@@ -2400,6 +2479,12 @@ function clamp(value: number, min: number, max: number) {
               {{ step.done ? '✓' : '•' }} {{ step.label }}
             </span>
           </div>
+          <div class="cloud-loading-actions">
+            <button class="local-data-button" type="button" @click="useLocalDataForThisSession">
+              先用本地資料
+            </button>
+            <small>雲端較慢時可先進入，之後仍可到資料工具手動同步。</small>
+          </div>
         </div>
       </template>
       <template v-else>
@@ -2594,8 +2679,15 @@ function clamp(value: number, min: number, max: number) {
         <strong>{{ isOnline ? '同步小宇宙在線' : '離線小宇宙已啟動' }}</strong>
         <p>{{ isOnline ? '照片、設定和今日狀態可以繼續同步。' : '倒數、回憶、設定仍可打開，網路回來後再同步。' }}</p>
       </div>
+      <div class="install-guide-card" :class="{ installed: installedDisplayMode }">
+        <strong>{{ pwaInstallGuide.title }}</strong>
+        <p>{{ pwaInstallGuide.text }}</p>
+        <ol v-if="pwaInstallGuide.steps.length">
+          <li v-for="step in pwaInstallGuide.steps" :key="step">{{ step }}</li>
+        </ol>
+      </div>
       <p>{{ isOnline ? '安裝後也可以離線打開，等網路回來會繼續更新。' : '已離線，仍可以打開已快取的倒數頁。' }}</p>
-      <button v-if="installReady" class="soft-button" type="button" @click="installApp">安裝到手機</button>
+      <button v-if="installReady && !installedDisplayMode" class="soft-button" type="button" @click="installApp">安裝到手機</button>
       <button v-if="updateReady" class="ghost-button" type="button" @click="refreshForUpdate">套用最新版本</button>
     </section>
 
