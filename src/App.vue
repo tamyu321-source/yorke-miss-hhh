@@ -46,6 +46,11 @@ const OPENING_RETURN_DURATION_MS = 4600;
 const OPENING_SKIP_DURATION_MS = 620;
 const OPENING_REDUCED_DURATION_MS = 650;
 const SETTINGS_UPDATED_KIND = 'settings-updated-at';
+const THEME_CHROME_COLORS: Record<ThemeId, { color: string; background: string; statusBar: string }> = {
+  peach: { color: '#f9d8d7', background: '#fff7f2', statusBar: 'black-translucent' },
+  mint: { color: '#dff4ef', background: '#eaf7f7', statusBar: 'black-translucent' },
+  night: { color: '#111a2d', background: '#111a2d', statusBar: 'black-translucent' }
+};
 const BOY_NAME = '大笨蛋北七';
 const GIRL_NAME = '小笨蛋粽子';
 const defaultSettings: AppSettings = {
@@ -976,6 +981,7 @@ const pwaInstallGuide = computed(() => {
     steps: ['確認網址使用 HTTPS', '用 Chrome 或 Edge 開啟', '從瀏覽器選單安裝']
   };
 });
+const showPasswordInstallHint = computed(() => isIosDevice.value && !installedDisplayMode.value && !cloudLoadingActive.value);
 const ritualSteps = computed(() => [
   { id: 'open', label: '打開今日文案', done: ritualOpened.value },
   { id: 'fortune', label: '抽一張今日小籤', done: fortuneReady.value },
@@ -1066,6 +1072,14 @@ watch(progressPercent, (value) => {
   previousProgressMilestone = milestone;
   triggerMilestoneWave();
 });
+
+watch(
+  () => previewTheme.value || settings.value.theme,
+  (theme) => {
+    updateAppThemeChrome(theme);
+  },
+  { immediate: true }
+);
 
 onMounted(() => {
   loadSettings();
@@ -2037,6 +2051,16 @@ function updateInstalledDisplayMode() {
   installedDisplayMode.value = window.matchMedia('(display-mode: standalone)').matches || standaloneNavigator.standalone === true;
 }
 
+function updateAppThemeChrome(theme: ThemeId) {
+  const chrome = THEME_CHROME_COLORS[theme];
+  const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  const statusBarMeta = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-status-bar-style"]');
+  if (themeColorMeta) themeColorMeta.content = chrome.color;
+  if (statusBarMeta) statusBarMeta.content = chrome.statusBar;
+  document.documentElement.style.backgroundColor = chrome.background;
+  document.body.style.backgroundColor = chrome.background;
+}
+
 async function installApp() {
   const promptEvent = deferredInstallPrompt as (Event & { prompt?: () => Promise<void> }) | null;
   if (!promptEvent?.prompt) return;
@@ -2509,6 +2533,10 @@ function clamp(value: number, min: number, max: number) {
           <strong>暗號通過</strong>
         </div>
         <p class="password-status">{{ passwordStatus || cloudStatus }}</p>
+        <div v-if="showPasswordInstallHint" class="password-install-hint">
+          <strong>想放到 iPhone 桌面？</strong>
+          <p>Safari 不會自動彈出安裝提示，請點分享按鈕，再選「加入主畫面」。</p>
+        </div>
       </template>
     </section>
 

@@ -137,6 +137,31 @@ button {
   font-size: 1rem;
 }
 
+.password-install-hint {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1px solid rgba(117, 183, 197, 0.22);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 92% 20%, rgba(246, 200, 111, 0.16), transparent 58px),
+    rgba(255, 250, 247, 0.68);
+  color: #243047;
+  box-shadow: 0 14px 34px rgba(54, 63, 88, 0.08);
+}
+
+.password-install-hint strong {
+  font-size: 0.92rem;
+}
+
+.password-install-hint p {
+  margin: 0;
+  color: #526174;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 .password-gate.cloud-loading {
   justify-content: center;
 }
@@ -1317,6 +1342,18 @@ button {
 
 .app-shell.theme-night .install-guide-card.installed {
   background: rgba(120, 200, 181, 0.18);
+}
+
+.app-shell.theme-night .password-install-hint {
+  border-color: rgba(143, 211, 224, 0.18);
+  background:
+    radial-gradient(circle at 92% 20%, rgba(228, 192, 106, 0.14), transparent 58px),
+    rgba(20, 28, 46, 0.72);
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .password-install-hint p {
+  color: var(--night-muted);
 }
 
 .app-shell.theme-night .photo-filmstrip figcaption span {
