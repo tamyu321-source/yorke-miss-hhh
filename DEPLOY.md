@@ -5,6 +5,16 @@
 - GitHub Pages：部署 Vite/Vue 前端。
 - Google Cloud Run：提供密碼登入和 Firestore 資料儲存 API。
 
+GitHub 使用者名稱：`tamyu321-source`
+
+GitHub Pages 頁面名稱：`yorke-miss-hhh`
+
+部署完成後的頁面網址會是：
+
+```text
+https://tamyu321-source.github.io/yorke-miss-hhh/
+```
+
 ## 1. 部署 Google Cloud API
 
 先在 Google Cloud 專案啟用 Firestore 和 Cloud Run，然後在專案根目錄執行：
@@ -16,7 +26,7 @@ gcloud run deploy count-to-814-api `
   --source cloud-api `
   --region asia-east1 `
   --allow-unauthenticated `
-  --set-env-vars APP_PASSWORD="<填入你指定的生日密碼>",SESSION_SECRET="<換成一段更長的隨機字串>",ALLOWED_ORIGIN="https://YOUR_GITHUB_USERNAME.github.io"
+  --set-env-vars APP_PASSWORD="<填入你指定的生日密碼>",SESSION_SECRET="<換成一段更長的隨機字串>",ALLOWED_ORIGIN="https://tamyu321-source.github.io"
 ```
 
 部署完成後，記下 Cloud Run 顯示的服務網址，例如：
@@ -36,6 +46,12 @@ VITE_CLOUD_API_URL=https://count-to-814-api-xxxxx.a.run.app
 再到 `Settings -> Pages`，Source 選 `GitHub Actions`。
 
 推送到 `main` 或 `master` 後，`.github/workflows/deploy-pages.yml` 會自動建置並部署。
+
+GitHub Pages 的公開網址：
+
+```text
+https://tamyu321-source.github.io/yorke-miss-hhh/
+```
 
 ## 3. 本機測試
 
