@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { createWorker } from 'tesseract.js';
 import * as XLSX from 'xlsx';
+import { appViewContextKey } from './appViewContext';
 import { createExportData, downloadJsonBackup, parseImportData, type AppExportData } from './backup';
 import { downloadCalendar } from './calendar';
+import AppShellEffects from './components/AppShellEffects.vue';
+import BottomNav from './components/BottomNav.vue';
+import PasswordGate from './components/PasswordGate.vue';
 import {
   clearCloudSession,
   fetchCloudState,
@@ -15,6 +19,11 @@ import {
 import { loadStoredPhotos, mergePhotos, savePhotos } from './photoDb';
 import { checkForAppUpdate as checkServiceWorkerUpdate, refreshForWaitingServiceWorker } from './pwa';
 import { restoreAppLocalStorage, storageKey } from './storage';
+import CountdownView from './views/CountdownView.vue';
+import JourneyView from './views/JourneyView.vue';
+import MemoriesView from './views/MemoriesView.vue';
+import PrepareView from './views/PrepareView.vue';
+import TodayView from './views/TodayView.vue';
 import type {
   ActiveTab,
   AppSettings,
@@ -155,6 +164,8 @@ const journeyOcrProgress = ref(0);
 const journeyNewTripTitle = ref('');
 const journeyNewDayDate = ref('');
 const journeyPanelMode = ref<JourneyPanelMode>('schedule');
+const audioUnlocked = ref(false);
+const bgmPlaying = ref(false);
 
 let timer: number | undefined;
 let secretPressTimer: number | undefined;
@@ -175,6 +186,10 @@ let lastCloudSnapshot = '';
 let loadingCloudSnapshot = false;
 let cloudLoadRequestId = 0;
 let localCloudFallbackRequested = false;
+let audioContext: AudioContext | null = null;
+let bgmGain: GainNode | null = null;
+let bgmTimer: number | undefined;
+let bgmOscillators: OscillatorNode[] = [];
 
 const todayStart = computed(() => startOfDay(now.value));
 const configuredStartDate = computed(() => {
@@ -484,6 +499,7 @@ const visibleCapsulesDisplay = computed(() => {
   const lockedPreview = visibleCapsules.value.find((capsule) => !capsule.unlocked);
   return lockedPreview ? [...recent, lockedPreview] : recent;
 });
+const completedWishCount = computed(() => wishes.value.filter((wish) => wish.done).length);
 const activeJourneyTrip = computed(() => {
   if (!journeyTrips.value.length) return null;
   return (
@@ -674,8 +690,24 @@ watch(
   () => previewTheme.value || settings.value.theme,
   (theme) => {
     updateAppThemeChrome(theme);
+    if (bgmPlaying.value) {
+      stopBackgroundMusic();
+      startBackgroundMusic();
+    }
   },
   { immediate: true }
+);
+
+watch(
+  () => settings.value.soundFeedback,
+  (enabled) => {
+    if (enabled && appUnlocked.value && audioUnlocked.value) {
+      startBackgroundMusic();
+      return;
+    }
+
+    stopBackgroundMusic();
+  }
 );
 
 onMounted(() => {
@@ -717,6 +749,8 @@ onUnmounted(() => {
   if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
   if (milestoneTimer) window.clearTimeout(milestoneTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
+  stopBackgroundMusic();
+  closeAudioContext();
   window.removeEventListener('online', updateOnlineState);
   window.removeEventListener('offline', updateOnlineState);
   window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -797,6 +831,9 @@ function enterUnlockedApp(startSync: boolean) {
   if (!appUnlocked.value) {
     appUnlocked.value = true;
     startOpeningSequence();
+  }
+  if (audioUnlocked.value) {
+    startBackgroundMusic();
   }
   if (startSync) {
     startCloudSyncLoop();
@@ -934,6 +971,7 @@ function getStorageTimestamp(value: string | null | undefined) {
 }
 
 function lockApp() {
+  stopBackgroundMusic();
   clearCloudSession();
   cloudToken.value = '';
   appUnlocked.value = false;
@@ -954,6 +992,7 @@ function toggleTask() {
     localStorage.setItem(key, 'done');
     requestCloudSync();
     launchThemeBurst();
+    playSoftSound('success');
     gentleVibrate(12);
     return;
   }
@@ -1049,6 +1088,7 @@ function checkInToday() {
   localStorage.setItem(storageKey('checkins'), JSON.stringify(checkins.value));
   requestCloudSync();
   launchThemeBurst();
+  playSoftSound('success');
   gentleVibrate(16);
 }
 
@@ -1450,6 +1490,7 @@ function completeTodayRitual() {
   localStorage.setItem(storageKey('ritual-complete', dateKey.value), 'yes');
   requestCloudSync();
   launchSparkles();
+  playSoftSound('success');
 }
 
 async function copyDailyReceipt() {
@@ -1572,8 +1613,12 @@ function addWish() {
 }
 
 function toggleWish(id: string) {
+  const target = wishes.value.find((wish) => wish.id === id);
   wishes.value = wishes.value.map((wish) => (wish.id === id ? { ...wish, done: !wish.done } : wish));
   saveWishes();
+  if (target && !target.done) {
+    playSoftSound('success');
+  }
 }
 
 function removeWish(id: string) {
@@ -1823,6 +1868,7 @@ function updateJourneyEntryField(dayId: string, entryId: string, field: JourneyE
 function toggleJourneyEntryDone(dayId: string, entryId: string) {
   const trip = activeJourneyTrip.value;
   if (!trip) return;
+  const target = trip.days.find((day) => day.id === dayId)?.entries.find((entry) => entry.id === entryId);
   updateJourneyTrip(trip.id, {
     days: trip.days.map((day) =>
       day.id === dayId
@@ -1833,6 +1879,9 @@ function toggleJourneyEntryDone(dayId: string, entryId: string) {
         : day
     )
   });
+  if (target && !target.done) {
+    playSoftSound('success');
+  }
   gentleVibrate(8);
 }
 
@@ -2052,27 +2101,424 @@ function exportMeetingCalendar() {
   importMessage.value = '已匯出行事曆。';
 }
 
-function playSoftSound(kind: 'paper' | 'secret' | 'radar') {
-  if (!settings.value.soundFeedback) return;
+type SoftSoundKind = 'tap' | 'success' | 'paper' | 'secret' | 'radar';
+type BackgroundNote = { note: number; beat: number; duration: number; volume: number };
+type BackgroundChord = { notes: number[]; beat: number; duration: number; volume: number };
+type BackgroundMusicTheme = {
+  bpm: number;
+  loopBeats: number;
+  masterVolume: number;
+  padWave: OscillatorType;
+  melodyWave: OscillatorType;
+  bassWave: OscillatorType;
+  chords: BackgroundChord[];
+  bass: BackgroundNote[];
+  melody: BackgroundNote[];
+  shimmer: BackgroundNote[];
+};
+
+const backgroundMusicThemes: Record<ThemeId, BackgroundMusicTheme> = {
+  peach: createBackgroundMusicTheme({
+    bpm: 72,
+    loopBeats: 64,
+    masterVolume: 0.72,
+    padWave: 'sine',
+    melodyWave: 'triangle',
+    bassWave: 'sine',
+    chordBeats: 4,
+    chordVolume: 0.015,
+    bassVolume: 0.018,
+    melodyVolume: 0.032,
+    shimmerVolume: 0.011,
+    chords: [
+      [48, 55, 59, 64],
+      [45, 52, 57, 60],
+      [41, 48, 55, 60],
+      [43, 50, 55, 59],
+      [48, 55, 60, 64],
+      [45, 52, 55, 60],
+      [41, 48, 52, 57],
+      [43, 50, 55, 62],
+      [45, 52, 57, 64],
+      [40, 47, 52, 55],
+      [41, 48, 55, 60],
+      [43, 50, 55, 59],
+      [48, 55, 59, 64],
+      [52, 55, 60, 67],
+      [41, 48, 55, 64],
+      [43, 50, 55, 62]
+    ],
+    bassNotes: [36, 36, 45, 45, 41, 41, 43, 43, 36, 36, 45, 45, 41, 43, 48, 43],
+    melodyNotes: [
+      64, 67, 69, 67, 64, 62, 60, -1, 62, 64, 67, 72, 71, 69, 67, -1,
+      64, 67, 69, 74, 72, 69, 67, 64, 60, 62, 64, 67, 69, 67, 64, -1,
+      67, 69, 72, 76, 74, 72, 69, 67, 64, 65, 67, 72, 71, 69, 67, -1,
+      64, 67, 69, 67, 64, 62, 60, -1, 60, 64, 67, 72, 76, 74, 72, -1
+    ],
+    shimmerNotes: [76, -1, 79, -1, 81, 79, 76, -1, 72, -1, 76, 79, 84, -1, 81, -1]
+  }),
+  mint: createBackgroundMusicTheme({
+    bpm: 84,
+    loopBeats: 64,
+    masterVolume: 0.62,
+    padWave: 'triangle',
+    melodyWave: 'sine',
+    bassWave: 'triangle',
+    chordBeats: 4,
+    chordVolume: 0.012,
+    bassVolume: 0.014,
+    melodyVolume: 0.029,
+    shimmerVolume: 0.014,
+    chords: [
+      [50, 57, 62, 66],
+      [45, 52, 57, 61],
+      [47, 54, 59, 62],
+      [43, 50, 57, 62],
+      [50, 57, 61, 66],
+      [42, 49, 54, 57],
+      [47, 54, 59, 66],
+      [45, 52, 57, 61],
+      [50, 57, 62, 69],
+      [45, 52, 57, 61],
+      [43, 50, 55, 59],
+      [47, 54, 59, 62],
+      [50, 57, 62, 66],
+      [54, 61, 66, 69],
+      [47, 54, 59, 66],
+      [45, 52, 57, 64]
+    ],
+    bassNotes: [38, 38, 45, 45, 43, 43, 47, 47, 38, 42, 47, 45, 38, 45, 43, 47],
+    melodyNotes: [
+      62, 66, 69, 74, 73, 69, 66, 64, 62, -1, 64, 66, 69, 71, 69, -1,
+      66, 69, 74, 78, 76, 74, 71, 69, 67, 66, 64, 66, 69, 74, 73, -1,
+      69, 71, 74, 81, 78, 76, 74, 71, 69, -1, 66, 69, 74, 76, 74, -1,
+      62, 66, 69, 74, 73, 69, 66, 64, 62, 64, 66, 69, 71, 69, 66, -1
+    ],
+    shimmerNotes: [86, 83, -1, 81, 78, -1, 81, 83, 86, -1, 88, 86, 83, -1, 81, -1]
+  }),
+  night: createBackgroundMusicTheme({
+    bpm: 64,
+    loopBeats: 64,
+    masterVolume: 0.8,
+    padWave: 'sine',
+    melodyWave: 'sine',
+    bassWave: 'sine',
+    chordBeats: 4,
+    chordVolume: 0.018,
+    bassVolume: 0.02,
+    melodyVolume: 0.028,
+    shimmerVolume: 0.009,
+    chords: [
+      [45, 52, 57, 60],
+      [40, 47, 52, 55],
+      [41, 48, 52, 57],
+      [43, 50, 55, 59],
+      [45, 52, 57, 64],
+      [36, 43, 48, 52],
+      [41, 48, 55, 60],
+      [43, 50, 55, 62],
+      [45, 52, 57, 60],
+      [40, 47, 52, 59],
+      [38, 45, 50, 53],
+      [43, 50, 55, 59],
+      [45, 52, 57, 64],
+      [48, 55, 60, 64],
+      [41, 48, 52, 57],
+      [43, 50, 55, 59]
+    ],
+    bassNotes: [33, 33, 28, 28, 29, 29, 31, 31, 33, 28, 29, 31, 33, 36, 29, 31],
+    melodyNotes: [
+      69, -1, 72, 74, 72, 69, 67, -1, 64, 67, 69, 72, 71, 69, 64, -1,
+      69, 72, 76, 79, 76, 74, 72, -1, 67, 69, 72, 74, 72, 69, 67, -1,
+      64, 67, 69, 72, 76, 74, 72, 69, 67, -1, 64, 67, 69, 72, 71, -1,
+      69, 72, 74, 76, 74, 72, 69, 67, 64, -1, 67, 69, 72, 74, 69, -1
+    ],
+    shimmerNotes: [81, -1, 84, -1, 88, -1, 86, -1, 84, -1, 81, -1, 79, -1, 81, -1]
+  })
+};
+
+function getAudioContext() {
+  if (audioContext && audioContext.state !== 'closed') return audioContext;
+
   const audioWindow = window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
   const AudioContextCtor = window.AudioContext || audioWindow.webkitAudioContext;
-  if (!AudioContextCtor) return;
+  if (!AudioContextCtor) return null;
 
-  const context = new AudioContextCtor();
+  audioContext = new AudioContextCtor();
+  return audioContext;
+}
+
+function unlockAudio() {
+  if (!settings.value.soundFeedback) return null;
+
+  const context = getAudioContext();
+  if (!context) return null;
+  if (context.state === 'suspended') {
+    void context.resume();
+  }
+  audioUnlocked.value = true;
+  return context;
+}
+
+function handleAppPointerDown(event: PointerEvent) {
+  const context = unlockAudio();
+  if (!context) return;
+  if (appUnlocked.value) {
+    startBackgroundMusic();
+  }
+  if (isInteractiveAudioTarget(event.target)) {
+    playSoftSound('tap');
+  }
+}
+
+function handleAppKeyDown(event: KeyboardEvent) {
+  if (event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
+  if (!isInteractiveAudioTarget(event.target)) return;
+  const context = unlockAudio();
+  if (!context) return;
+  if (appUnlocked.value) {
+    startBackgroundMusic();
+  }
+  playSoftSound('tap');
+}
+
+function isInteractiveAudioTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest('button, a, label, select, summary, [role="button"], input[type="checkbox"], input[type="range"]'));
+}
+
+function playSoftSound(kind: SoftSoundKind) {
+  if (!settings.value.soundFeedback) return;
+  const context = unlockAudio();
+  if (!context) return;
+
+  const presets: Record<SoftSoundKind, { frequencies: number[]; duration: number; volume: number; type: OscillatorType }> = {
+    tap: { frequencies: [520], duration: 0.08, volume: 0.018, type: 'sine' },
+    success: { frequencies: [523.25, 659.25, 783.99], duration: 0.22, volume: 0.03, type: 'sine' },
+    paper: { frequencies: [392, 493.88], duration: 0.18, volume: 0.026, type: 'triangle' },
+    secret: { frequencies: [659.25, 880], duration: 0.24, volume: 0.034, type: 'sine' },
+    radar: { frequencies: [220, 330], duration: 0.2, volume: 0.03, type: 'triangle' }
+  };
+  const preset = presets[kind];
+  const startTime = context.currentTime;
+
+  preset.frequencies.forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const offset = index * 0.045;
+    oscillator.type = preset.type;
+    oscillator.frequency.setValueAtTime(frequency, startTime + offset);
+    gain.gain.setValueAtTime(0.0001, startTime + offset);
+    gain.gain.exponentialRampToValueAtTime(preset.volume, startTime + offset + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + offset + preset.duration);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(startTime + offset);
+    oscillator.stop(startTime + offset + preset.duration + 0.04);
+  });
+}
+
+function createBackgroundMusicTheme(config: {
+  bpm: number;
+  loopBeats: number;
+  masterVolume: number;
+  padWave: OscillatorType;
+  melodyWave: OscillatorType;
+  bassWave: OscillatorType;
+  chordBeats: number;
+  chordVolume: number;
+  bassVolume: number;
+  melodyVolume: number;
+  shimmerVolume: number;
+  chords: number[][];
+  bassNotes: number[];
+  melodyNotes: number[];
+  shimmerNotes: number[];
+}): BackgroundMusicTheme {
+  return {
+    bpm: config.bpm,
+    loopBeats: config.loopBeats,
+    masterVolume: config.masterVolume,
+    padWave: config.padWave,
+    melodyWave: config.melodyWave,
+    bassWave: config.bassWave,
+    chords: config.chords.map((notes, index) => ({
+      notes,
+      beat: index * config.chordBeats,
+      duration: config.chordBeats + 0.65,
+      volume: config.chordVolume
+    })),
+    bass: makeBackgroundLine(config.bassNotes, [2, 2], 0, 1.85, config.bassVolume),
+    melody: makeBackgroundLine(config.melodyNotes, [0.75, 0.5, 0.75, 1, 1, 0.5, 0.75, 0.75], 0, 0.86, config.melodyVolume),
+    shimmer: makeBackgroundLine(config.shimmerNotes, [2, 2, 1, 1, 2, 2], 0.35, 0.76, config.shimmerVolume)
+  };
+}
+
+function makeBackgroundLine(notes: number[], rhythm: number[], startBeat: number, sustainRatio: number, volume: number) {
+  let beat = startBeat;
+  const line: BackgroundNote[] = [];
+
+  notes.forEach((note, index) => {
+    const step = rhythm[index % rhythm.length];
+    if (note >= 0) {
+      line.push({
+        note,
+        beat,
+        duration: Math.max(step * sustainRatio, 0.08),
+        volume
+      });
+    }
+    beat += step;
+  });
+
+  return line;
+}
+
+function midiToFrequency(note: number) {
+  return 440 * 2 ** ((note - 69) / 12);
+}
+
+function startBackgroundMusic() {
+  if (!settings.value.soundFeedback || bgmPlaying.value) return;
+  const context = unlockAudio();
+  if (!context) return;
+
+  const theme = backgroundMusicThemes[previewTheme.value || settings.value.theme];
+  bgmGain = context.createGain();
+  bgmGain.gain.setValueAtTime(0.0001, context.currentTime);
+  bgmGain.gain.exponentialRampToValueAtTime(theme.masterVolume, context.currentTime + 1.4);
+  bgmGain.connect(context.destination);
+
+  bgmPlaying.value = true;
+  scheduleBackgroundPhrase();
+  bgmTimer = window.setInterval(scheduleBackgroundPhrase, Math.round((theme.loopBeats * 60 * 1000) / theme.bpm));
+}
+
+function scheduleBackgroundPhrase() {
+  const context = audioContext && audioContext.state !== 'closed' ? audioContext : null;
+  if (!context || !bgmGain || !settings.value.soundFeedback) return;
+
+  const theme = backgroundMusicThemes[previewTheme.value || settings.value.theme];
+  const beatSeconds = 60 / theme.bpm;
+  const startTime = context.currentTime + 0.12;
+
+  theme.chords.forEach((chord) => {
+    chord.notes.forEach((note, index) => {
+      scheduleBackgroundTone({
+        context,
+        note,
+        startTime: startTime + chord.beat * beatSeconds,
+        duration: chord.duration * beatSeconds,
+        volume: chord.volume * (index === 0 ? 0.9 : 1),
+        type: theme.padWave,
+        detune: index % 2 === 0 ? -2 : 2
+      });
+    });
+  });
+
+  theme.bass.forEach((note) => {
+    scheduleBackgroundTone({
+      context,
+      note: note.note,
+      startTime: startTime + note.beat * beatSeconds,
+      duration: note.duration * beatSeconds,
+      volume: note.volume,
+      type: theme.bassWave,
+      detune: -4
+    });
+  });
+
+  theme.melody.forEach((note) => {
+    scheduleBackgroundTone({
+      context,
+      note: note.note,
+      startTime: startTime + note.beat * beatSeconds,
+      duration: note.duration * beatSeconds,
+      volume: note.volume,
+      type: theme.melodyWave
+    });
+  });
+
+  theme.shimmer.forEach((note) => {
+    scheduleBackgroundTone({
+      context,
+      note: note.note,
+      startTime: startTime + note.beat * beatSeconds,
+      duration: note.duration * beatSeconds,
+      volume: note.volume,
+      type: 'sine',
+      detune: 3
+    });
+  });
+}
+
+function scheduleBackgroundTone({
+  context,
+  note,
+  startTime,
+  duration,
+  volume,
+  type,
+  detune = 0
+}: {
+  context: AudioContext;
+  note: number;
+  startTime: number;
+  duration: number;
+  volume: number;
+  type: OscillatorType;
+  detune?: number;
+}) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
-  oscillator.type = kind === 'radar' ? 'triangle' : 'sine';
-  oscillator.frequency.value = kind === 'secret' ? 660 : kind === 'radar' ? 220 : 440;
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.045, context.currentTime + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+  const attack = Math.min(0.22, duration * 0.28);
+  const release = Math.min(0.5, duration * 0.45);
+  const endTime = startTime + duration;
+
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(midiToFrequency(note), startTime);
+  oscillator.detune.setValueAtTime(detune, startTime);
+  gain.gain.setValueAtTime(0.0001, startTime);
+  gain.gain.exponentialRampToValueAtTime(volume, startTime + attack);
+  gain.gain.setTargetAtTime(0.0001, Math.max(startTime + attack, endTime - release), release / 3);
   oscillator.connect(gain);
-  gain.connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.24);
-  window.setTimeout(() => {
-    context.close();
-  }, 320);
+  gain.connect(bgmGain as GainNode);
+  oscillator.onended = () => {
+    bgmOscillators = bgmOscillators.filter((item) => item !== oscillator);
+  };
+  bgmOscillators.push(oscillator);
+  oscillator.start(startTime);
+  oscillator.stop(endTime + 0.08);
+}
+
+function stopBackgroundMusic() {
+  if (bgmTimer) {
+    window.clearInterval(bgmTimer);
+    bgmTimer = undefined;
+  }
+
+  const context = audioContext && audioContext.state !== 'closed' ? audioContext : null;
+  if (bgmGain && context && context.state !== 'closed') {
+    bgmGain.gain.cancelScheduledValues(context.currentTime);
+    bgmGain.gain.setTargetAtTime(0.0001, context.currentTime, 0.18);
+  }
+
+  bgmOscillators.forEach((oscillator) => {
+    try {
+      oscillator.stop();
+    } catch {
+      // Oscillators can already be stopped by a pending fade.
+    }
+  });
+  bgmOscillators = [];
+  bgmGain = null;
+  bgmPlaying.value = false;
+}
+
+function closeAudioContext() {
+  if (!audioContext || audioContext.state === 'closed') return;
+  void audioContext.close();
+  audioContext = null;
 }
 
 function startPlaneDrag(event: PointerEvent) {
@@ -2165,6 +2611,85 @@ function requestFinishOpening() {
   introTimer = window.setTimeout(finishOpening, OPENING_SKIP_DURATION_MS);
 }
 
+provide(appViewContextKey, {
+  activeJourneyDateRange, activeJourneyDay, activeJourneyDayEntries, activeJourneyDayId,
+  activeJourneyDayIndex, activeJourneyDayMeta, activeJourneyDays, activeJourneyMonthLabel,
+  activeJourneyProgress, activeJourneyScheduleSections, activeJourneyTrip, activeJourneyTripId,
+  activeTab, activeTabIndex, addCustomSecretCode, addDays,
+  addJourneyDay,
+  addJourneyEntry, addMemoryPhotos, addMoodHistory, addWish,
+  applyImportData, appUnlocked, arrivalReadyPercent, arrivalSteps,
+  autoScheduleActiveJourney, backgroundBeams, backgroundMotes, BOY_NAME,
+  burstParticles, cancelImportData, cancelSecretPress, capsuleShowAll,
+  checkedInToday, checkForAppUpdate, checkins, checkinStreak,
+  checkInToday, chooseRadar, clearDailyAnswer, clearDailyMessage,
+  closenessLabel, cloudLoadingActive, cloudLoadingSteps, cloudStatus,
+  cloudSyncBusy, cloudSyncConfigured, cloudToken, completedWishCount,
+  completeTodayRitual, configuredStartDate, configuredStartDay, copyDailyReceipt,
+  countdown, createBlankJourneyTrip, currentDayIndex, customSecretCodes,
+  dailyAnswer, dailyMessage, dailyQuestions, dailyReceipt,
+  dateKey, daysUntilMeeting, dismissOnboarding, dismissUpdateToast,
+  displayBoyName, displayGirlName, draftStartDate, draftTargetDate,
+  drawFortune, endPlaneDrag, enterUnlockedApp, exportActiveJourneyCalendar,
+  exportData, exportMeetingCalendar, finishOpening, flippedCapsules,
+  flipUnits, formatDateKey, formatJourneyDateLabel, fortuneDeck, fortuneLine, fortuneReady,
+  fortuneTitle, gentleVibrate, getCloudSettingsUpdatedAt, getComparableCloudSnapshot,
+  getInputValue, getLocalSettingsUpdatedAt, getStorageTimestamp, getTextareaValue,
+  GIRL_NAME, handleAppInstalled, handleBeforeInstallPrompt, handleControllerChange,
+  hiddenCardLine, importData, importJourneyFile, importJourneyRows,
+  importJourneyText, importMessage, importMode, installApp,
+  installedDisplayMode, installReady, introActive, introClosing,
+  introMode, isArrivalMode, isIosDevice, isMeetingDay,
+  isOnline, isScamRadarDay, JOURNEY_AUTO_TIME_SLOTS, journeyCalendarCells,
+  journeyDays, journeyImportBusy, journeyImportHelp, journeyImportMessage,
+  journeyImportText, journeyNewDayDate, journeyNewTripTitle, journeyOcrProgress,
+  journeyPanelMode, journeySummaryStats, journeyTripCountdownLabel, journeyTripOptions,
+  journeyTrips, launchSparkles, launchThemeBurst, loadCheckins,
+  loadCloudData, loadCustomSecretCodes, loadDailyState, loadJourneyTrips,
+  loadMeetingChecklist, loadMeetingMoments, loadMemoryPhotos, loadMoodHistory,
+  loadSecretCode, loadSettings, loadSuitcase, loadWishes,
+  localDataMode, localPreviewMode, lockApp, mailSecret,
+  meetingChecklist, meetingChecklistItems, meetingChecklistProgress, meetingMomentItems,
+  meetingMoments, meetingSummary, meetingSummaryLine, memoryPhotos,
+  milestoneFlash, moodBottleDots, moodHistory, moodOptions,
+  movePlaneDrag, navIndicatorStyle, newSecretCode, newWish,
+  now, onboardingSteps, onboardingVisible, openingChapters,
+  openingStars, openingThemeLabel, openThemeSettings, openTodayRitual,
+  packingItems, parseJourneyRowsFromImage, parseJourneyRowsFromSpreadsheetFile, passwordBusy,
+  passwordInput, passwordStatus, passwordSuccess, pendingImport,
+  pendingImportSummary, photoFilmstrip, planeDrag, planeStyle,
+  planeTrailStyle, playSoftSound, preparationStats, previewTheme,
+  previewThemeSelection, progress, progressPercent, pwaInstallGuide,
+  radarChoiceId, radarChoiceResult, radarChoices, radarResult,
+  radarScanned, rawDayIndex, refreshForUpdate, reloadPersistentState,
+  removeCustomSecretCode, removeJourneyDay, removeJourneyEntry, removeJourneyTrip,
+  removeMemoryPhoto, removeWish, requestCloudSync, requestFinishOpening,
+  resetSettings, resetToday, restoreSavedCloudSession, revealSecret,
+  ritualComplete, ritualOpened, ritualProgress, ritualSteps,
+  routeFillStyle, saveDailyAnswer, saveDailyMessage, savedMessageLine,
+  saveJourneyTrips, saveMemoryPhotos, saveSettings, saveWishes,
+  scanRadar, sceneStyle, sceneTilt, secretCodeInput,
+  secretCodeList, secretCodeUnlocked, secretMailed, secretPressing,
+  secretRevealed, secretWhisper, selectedMood, selectedMoodId,
+  selectedMoodLine, selectJourneyDay, selectJourneyTrip, selectJourneyTripFromEvent,
+  selectMood, setSettingsUpdatedAt, settings, settingsDraft,
+  shareCopied, showPasswordInstallHint, sparkles, startCloudSyncLoop,
+  startDateLabel, startOpeningSequence, startPlaneDrag, startSecretPress,
+  suitcaseChecked, suitcaseItems, suitcaseProgress, syncCloudNow,
+  targetDate, targetDateLabel, targetDateShortLabel, targetDayStart,
+  targetOffsetDays, targetOffsetMax, targetTimelineStyle, taskCompleted,
+  theaterLights, themeClass, themeOptions, themePreviewing,
+  themeTransition, timelineEvents, timelineProgressStyle, todayJourney,
+  todayNote, todayQuestion, todayStart, todayTask,
+  toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment,
+  toggleSuitcaseItem, toggleTask, toggleWish, triggerMilestoneWave,
+  unlockApp, unlockedCount, unlockSecretCode, updateActiveJourneyTitle,
+  updateAppThemeChrome, updateInstalledDisplayMode, updateJourneyDayField, updateJourneyEntryField,
+  updateJourneyTrip, updateOnlineState, updateReady, updateSceneTilt,
+  useLocalDataForThisSession, visibleCapsules, visibleCapsulesDisplay, waitForPasswordSuccess,
+  wishes
+});
+
 </script>
 
 <template>
@@ -2172,1081 +2697,20 @@ function requestFinishOpening() {
     class="app-shell"
     :class="[selectedMoodId ? `mood-${selectedMoodId}` : '', themeClass, { 'reduce-motion': settings.reducedMotion }]"
     :style="sceneStyle"
+    @pointerdown.capture="handleAppPointerDown"
+    @keydown.capture="handleAppKeyDown"
   >
-    <div v-if="themeTransition" class="theme-transition-layer" aria-hidden="true"></div>
-    <div class="burst-layer" aria-hidden="true">
-      <span
-        v-for="particle in burstParticles"
-        :key="particle.id"
-        class="theme-burst"
-        :style="{ '--burst-x': `${particle.x}px`, '--burst-y': `${particle.y}px`, animationDelay: particle.delay }"
-      ></span>
+
+    <AppShellEffects />
+    <PasswordGate v-if="!appUnlocked" />
+
+    <div v-if="appUnlocked" class="app-content">
+      <CountdownView v-if="activeTab === 'countdown'" />
+      <TodayView v-else-if="activeTab === 'today'" />
+      <JourneyView v-else-if="activeTab === 'journey'" />
+      <MemoriesView v-else-if="activeTab === 'memories'" />
+      <PrepareView v-else-if="activeTab === 'prepare'" />
+      <BottomNav />
     </div>
-    <div v-if="updateReady" class="pwa-update-toast" role="status">
-      <span aria-hidden="true"></span>
-      <div>
-        <strong>新版本準備好了</strong>
-        <p>套用後會帶著最新動畫重新打開。</p>
-      </div>
-      <button type="button" @click="refreshForUpdate">更新</button>
-      <button type="button" aria-label="稍後再說" @click="dismissUpdateToast">×</button>
-    </div>
-    <div v-if="onboardingVisible && !introActive" class="onboarding-layer" role="dialog" aria-label="快速導覽">
-      <article v-for="step in onboardingSteps" :key="step.title">
-        <span aria-hidden="true"></span>
-        <strong>{{ step.title }}</strong>
-        <p>{{ step.text }}</p>
-      </article>
-      <button class="soft-button" type="button" @click="dismissOnboarding">開始使用</button>
-    </div>
-
-    <button
-      v-if="appUnlocked && introActive"
-      class="opening-sequence"
-      :class="[`opening-${introMode}`, { closing: introClosing }]"
-      type="button"
-      aria-label="進入第一次見面倒數"
-      @click="requestFinishOpening"
-    >
-      <span class="opening-grid"></span>
-      <span class="opening-scan"></span>
-      <span class="opening-flare"></span>
-      <span class="opening-finale" aria-hidden="true"></span>
-      <span
-        v-for="star in openingStars"
-        :key="star.id"
-        class="opening-star"
-        :style="{ left: star.left, top: star.top, width: star.size, height: star.size, animationDelay: star.delay }"
-      ></span>
-      <span class="opening-orbit opening-orbit-one"></span>
-      <span class="opening-orbit opening-orbit-two"></span>
-      <span class="opening-orbit opening-orbit-three"></span>
-      <span class="opening-plane" aria-hidden="true">
-        <svg viewBox="0 0 64 64" focusable="false">
-          <polygon points="7,32 57,10 43,56 31,39 17,47" fill="currentColor" />
-          <polyline points="57,10 31,39 43,56" fill="none" stroke="rgba(255,255,255,.82)" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" />
-        </svg>
-      </span>
-      <span class="opening-copy">
-        <span>第一次見面倒數</span>
-        <strong>{{ displayGirlName }} 飛向 {{ displayBoyName }}</strong>
-        <em>{{ progressPercent }}% {{ openingThemeLabel }}</em>
-        <span class="opening-chapters" aria-hidden="true">
-          <i v-for="chapter in openingChapters" :key="chapter">{{ chapter }}</i>
-        </span>
-        <span class="opening-status" aria-hidden="true">
-          <i></i>
-          <i></i>
-          <i></i>
-          <i></i>
-        </span>
-      </span>
-    </button>
-
-    <div class="motion-sky" aria-hidden="true">
-      <span class="aurora aurora-one"></span>
-      <span class="aurora aurora-two"></span>
-      <span class="orbit-ring orbit-one"></span>
-      <span class="orbit-ring orbit-two"></span>
-      <span v-for="beam in backgroundBeams" :key="`beam-${beam.id}`" class="sky-beam" :style="{ left: beam.left, animationDelay: beam.delay }"></span>
-      <span
-        v-for="mote in backgroundMotes"
-        :key="`mote-${mote.id}`"
-        class="sky-mote"
-        :style="{ left: mote.left, top: mote.top, width: mote.size, height: mote.size, animationDelay: mote.delay }"
-      ></span>
-      <span class="sky-vortex"></span>
-      <span v-for="light in theaterLights" :key="`sky-${light.id}`" class="sky-star" :style="{ left: light.left, top: light.top, animationDelay: light.delay }"></span>
-    </div>
-
-    <section v-if="!appUnlocked" class="password-gate" :class="{ 'cloud-loading': cloudLoadingActive }" aria-labelledby="password-gate-title">
-      <template v-if="cloudLoadingActive">
-        <div class="cloud-loading-panel" role="status" aria-live="polite">
-          <span class="cloud-loading-orbit" aria-hidden="true">
-            <i></i>
-            <i></i>
-            <i></i>
-          </span>
-          <p class="eyebrow">雲端同步</p>
-          <h1 id="password-gate-title">正在把今天準備好</h1>
-          <p>{{ cloudStatus }}</p>
-          <div class="cloud-loading-steps">
-            <span v-for="step in cloudLoadingSteps" :key="step.label" :class="{ done: step.done }">
-              {{ step.done ? '✓' : '•' }} {{ step.label }}
-            </span>
-          </div>
-          <div class="cloud-loading-actions">
-            <button class="local-data-button" type="button" @click="useLocalDataForThisSession">
-              先用本地資料
-            </button>
-            <small>雲端較慢時可先進入，之後仍可到資料工具手動同步。</small>
-          </div>
-        </div>
-      </template>
-      <template v-else>
-        <p class="eyebrow">第一次見面倒數</p>
-        <h1 id="password-gate-title">先說暗號</h1>
-        <p class="password-hint">提示：小笨蛋生日</p>
-        <form class="password-form" @submit.prevent="unlockApp">
-        <input
-          v-model="passwordInput"
-          inputmode="numeric"
-          autocomplete="current-password"
-          maxlength="16"
-          placeholder="輸入密碼"
-          type="password"
-        />
-        <button class="soft-button" type="submit" :disabled="passwordBusy">
-          {{ passwordBusy ? '確認中...' : '進入' }}
-        </button>
-        </form>
-        <div v-if="passwordSuccess" class="password-success" aria-live="polite">
-          <span aria-hidden="true"></span>
-          <strong>暗號通過</strong>
-        </div>
-        <p class="password-status">{{ passwordStatus || cloudStatus }}</p>
-        <div v-if="showPasswordInstallHint" class="password-install-hint">
-          <strong>想放到 iPhone 桌面？</strong>
-          <p>Safari 不會自動彈出安裝提示，請點分享按鈕，再選「加入主畫面」。</p>
-        </div>
-      </template>
-    </section>
-
-    <template v-else>
-    <button
-      v-if="!introActive && activeTab !== 'prepare'"
-      class="theme-discovery"
-      type="button"
-      aria-label="前往主題切換"
-      @click="openThemeSettings"
-    >
-      <span aria-hidden="true"></span>
-      換氛圍
-    </button>
-
-    <section v-if="isMeetingDay && activeTab === 'countdown'" class="theater-section" aria-labelledby="theater-title">
-      <span
-        v-for="light in theaterLights"
-        :key="light.id"
-        class="theater-light"
-        :style="{ left: light.left, top: light.top, animationDelay: light.delay }"
-        aria-hidden="true"
-      ></span>
-      <p class="eyebrow">8 月 14 日劇場</p>
-      <h1 id="theater-title">等待落地，故事開場</h1>
-      <p>從台南到上海，從螢幕到眼前，所有倒數都在這一天變成真的。</p>
-    </section>
-
-    <section v-show="activeTab === 'countdown'" class="hero-section" aria-labelledby="countdown-title">
-      <p class="eyebrow">第一次見面倒數</p>
-      <h1 id="countdown-title">
-        {{ isMeetingDay ? targetDateShortLabel : `${displayGirlName} 飛向 ${displayBoyName}` }}
-      </h1>
-
-      <div v-if="isMeetingDay" class="arrival-message">
-        等待結束，故事正式開始 ❤️
-      </div>
-
-      <div v-else class="countdown-grid" :aria-label="`距離 ${targetDateLabel} 的倒數`">
-        <div :class="{ flipping: flipUnits.includes('days') }">
-          <strong>{{ countdown.days }}</strong>
-          <span>天</span>
-        </div>
-        <div :class="{ flipping: flipUnits.includes('hours') }">
-          <strong>{{ countdown.hours }}</strong>
-          <span>小時</span>
-        </div>
-        <div :class="{ flipping: flipUnits.includes('minutes') }">
-          <strong>{{ countdown.minutes }}</strong>
-          <span>分鐘</span>
-        </div>
-        <div>
-          <strong>{{ countdown.seconds }}</strong>
-          <span>秒</span>
-        </div>
-      </div>
-
-      <p class="daily-line">{{ todayNote }}</p>
-      <p class="target-time">目標時間：{{ targetDateLabel }}</p>
-      <p class="target-time">開始時間：{{ startDateLabel }}</p>
-      <p class="welcome-line">{{ settings.welcomeLine }}</p>
-    </section>
-
-    <section v-if="isArrivalMode" v-show="activeTab === 'countdown'" class="arrival-mode-section" aria-labelledby="arrival-mode-title">
-      <div>
-        <p class="section-kicker">最後 {{ daysUntilMeeting }} 天</p>
-        <h2 id="arrival-mode-title">抵達模式已啟動</h2>
-      </div>
-      <div class="arrival-ready-ring">
-        <strong>{{ arrivalReadyPercent }}%</strong>
-        <span>準備完成</span>
-      </div>
-      <div class="arrival-mode-grid">
-        <span v-for="step in arrivalSteps" :key="step.label" :class="{ done: step.done }">
-          {{ step.done ? '✓' : '+' }} {{ step.label }}
-        </span>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'countdown'" class="flight-section" aria-label="台南飛向上海">
-      <div class="section-heading">
-        <span>台南</span>
-        <span>{{ progressPercent }}%</span>
-        <span>上海</span>
-      </div>
-
-      <div class="flight-map" :class="{ 'milestone-wave': milestoneFlash }">
-        <div class="map-texture"></div>
-        <span class="plane-trail" :style="planeTrailStyle" aria-hidden="true"></span>
-        <span class="map-cloud cloud-one" aria-hidden="true"></span>
-        <span class="map-cloud cloud-two" aria-hidden="true"></span>
-        <span class="map-glint glint-one" aria-hidden="true"></span>
-        <span class="map-glint glint-two" aria-hidden="true"></span>
-        <svg class="route-svg" viewBox="0 0 320 190" role="img" aria-label="從台南飛往上海的航線">
-          <path class="route-shadow" d="M43 139 C105 87, 178 48, 278 47" />
-          <path class="route-line" d="M43 139 C105 87, 178 48, 278 47" />
-          <circle class="city-dot start" cx="43" cy="139" r="6" />
-          <circle class="city-dot end" cx="278" cy="47" r="6" />
-        </svg>
-        <div class="city-label tainan">台南</div>
-        <div class="city-label shanghai">上海</div>
-        <button
-          class="plane"
-          :class="{ dragging: planeDrag.dragging }"
-          :style="planeStyle"
-          type="button"
-          aria-label="讓小飛機撒一點星光"
-          @click="launchSparkles"
-          @pointerdown="startPlaneDrag"
-          @pointermove="movePlaneDrag"
-          @pointerup="endPlaneDrag"
-          @pointerleave="endPlaneDrag"
-          @pointercancel="endPlaneDrag"
-        >
-          <svg viewBox="0 0 64 64" focusable="false">
-            <polygon points="7,32 57,10 43,56 31,39 17,47" fill="currentColor" />
-            <polyline points="57,10 31,39 43,56" fill="none" stroke="#fffaf7" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" />
-            <polygon points="17,47 31,39 24,35" fill="#1b2538" opacity=".24" />
-          </svg>
-          <span
-            v-for="sparkle in sparkles"
-            :key="sparkle.id"
-            class="sparkle"
-            :style="{ '--spark-x': `${sparkle.x}px`, '--spark-y': `${sparkle.y}px` }"
-            aria-hidden="true"
-          ></span>
-        </button>
-      </div>
-
-      <div class="progress-track" aria-hidden="true">
-        <div class="progress-fill" :style="routeFillStyle"></div>
-      </div>
-
-      <div class="closeness-panel">
-        <div>
-          <p class="section-kicker">靠近度</p>
-          <strong>{{ closenessLabel }}</strong>
-        </div>
-        <span>{{ progressPercent }}%</span>
-      </div>
-
-    </section>
-
-    <section v-show="activeTab === 'countdown'" class="journey-summary-section" aria-labelledby="journey-summary-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">旅程總覽</p>
-          <h2 id="journey-summary-title">把靠近的證據收成一束光</h2>
-        </div>
-        <button class="ghost-button" type="button" @click="exportMeetingCalendar">加入行事曆</button>
-      </div>
-      <div class="summary-grid">
-        <article v-for="item in meetingSummary" :key="item.label">
-          <span>{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-        </article>
-      </div>
-      <p class="summary-line">{{ meetingSummaryLine }}</p>
-    </section>
-
-    <section v-show="activeTab === 'countdown'" class="pwa-status-section" aria-labelledby="pwa-title">
-      <div>
-        <p class="section-kicker">PWA 狀態</p>
-        <h2 id="pwa-title">{{ isOnline ? '目前在線上' : '目前離線' }}</h2>
-      </div>
-      <div class="offline-cosmos" :class="{ online: isOnline }">
-        <span aria-hidden="true"></span>
-        <strong>{{ isOnline ? '同步小宇宙在線' : '離線小宇宙已啟動' }}</strong>
-        <p>{{ isOnline ? '照片、設定和今日狀態可以繼續同步。' : '倒數、回憶、設定仍可打開，網路回來後再同步。' }}</p>
-      </div>
-      <div class="install-guide-card" :class="{ installed: installedDisplayMode }">
-        <strong>{{ pwaInstallGuide.title }}</strong>
-        <p>{{ pwaInstallGuide.text }}</p>
-        <ol v-if="pwaInstallGuide.steps.length">
-          <li v-for="step in pwaInstallGuide.steps" :key="step">{{ step }}</li>
-        </ol>
-      </div>
-      <p>{{ isOnline ? '安裝後也可以離線打開，等網路回來會繼續更新。' : '已離線，仍可以打開已快取的倒數頁。' }}</p>
-      <button v-if="installReady && !installedDisplayMode" class="soft-button" type="button" @click="installApp">安裝到手機</button>
-      <button v-if="updateReady" class="ghost-button" type="button" @click="refreshForUpdate">套用最新版本</button>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="today-mode-section" aria-labelledby="today-mode-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">今日模式</p>
-          <h2 id="today-mode-title">今天先看這三件事</h2>
-        </div>
-        <button class="ghost-button" type="button" @click="resetToday">重置今日</button>
-      </div>
-      <div class="today-focus-list">
-        <article>
-          <span>文案</span>
-          <p>{{ todayNote }}</p>
-        </article>
-        <article>
-          <span>任務</span>
-          <p>{{ todayTask }}</p>
-        </article>
-        <article>
-          <span>問題</span>
-          <p>{{ todayQuestion.prompt }}</p>
-        </article>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="ritual-section" aria-labelledby="ritual-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">今日開封</p>
-          <h2 id="ritual-title">{{ ritualComplete ? '今天已經被好好收起來' : '把今天一格一格打開' }}</h2>
-        </div>
-        <span class="date-pill">{{ ritualProgress }}%</span>
-      </div>
-      <button class="wide-soft-button" :class="{ completed: ritualOpened }" type="button" @click="openTodayRitual">
-        {{ ritualOpened ? '今日文案已開封' : '開封今日文案' }}
-      </button>
-      <div class="ritual-steps">
-        <span v-for="step in ritualSteps" :key="step.id" :class="{ done: step.done }">
-          {{ step.done ? '✓' : '+' }} {{ step.label }}
-        </span>
-      </div>
-      <button class="ghost-button ritual-finish" type="button" :disabled="ritualProgress < 100" @click="completeTodayRitual">
-        {{ ritualComplete ? '已生成今日小票' : '完成今日儀式' }}
-      </button>
-      <div class="daily-receipt">
-        <pre>{{ dailyReceipt }}</pre>
-        <button class="soft-button" type="button" @click="copyDailyReceipt">
-          {{ shareCopied ? '已複製' : '複製今日小票' }}
-        </button>
-      </div>
-    </section>
-
-    <section v-if="isScamRadarDay" v-show="activeTab === 'today'" class="radar-section" aria-labelledby="radar-title">
-      <div>
-        <p class="section-kicker">防詐雷達</p>
-        <h2 id="radar-title">{{ dateKey === '2026-04-19' ? '第一次掃描' : '持續觀察中' }}</h2>
-      </div>
-      <button class="soft-button" type="button" @click="scanRadar">掃描</button>
-      <p v-if="radarScanned">{{ radarResult }}</p>
-      <div v-if="radarScanned" class="radar-choices">
-        <button
-          v-for="choice in radarChoices"
-          :key="choice.id"
-          class="ghost-button"
-          :class="{ selected: radarChoiceId === choice.id }"
-          type="button"
-          @click="chooseRadar(choice.id)"
-        >
-          {{ choice.label }}
-        </button>
-      </div>
-      <p v-if="radarChoiceResult">{{ radarChoiceResult }}</p>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="checkin-section" aria-labelledby="checkin-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">每日簽到軌跡</p>
-          <h2 id="checkin-title">今天也有想你</h2>
-        </div>
-        <span class="date-pill">連續 {{ checkinStreak }} 天</span>
-      </div>
-      <button class="wide-soft-button" :class="{ completed: checkedInToday }" type="button" @click="checkInToday">
-        {{ checkedInToday ? '今天已留下光點' : '留下今天的光點' }}
-      </button>
-      <div class="checkin-dots" aria-hidden="true">
-        <span v-for="day in journeyDays.length" :key="day" :class="{ active: checkins.includes(formatDateKey(addDays(configuredStartDay, day - 1))) }"></span>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="fortune-section" aria-labelledby="fortune-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">今日小籤</p>
-          <h2 id="fortune-title">{{ fortuneReady ? fortuneTitle : '抽一張今天的籤' }}</h2>
-        </div>
-        <button class="soft-button" type="button" :disabled="fortuneReady" @click="drawFortune">
-          {{ fortuneReady ? '已抽' : '抽籤' }}
-        </button>
-      </div>
-      <p class="fortune-line">{{ fortuneReady ? fortuneLine : '一天只抽一次，讓今天自己說話。' }}</p>
-    </section>
-
-    <section v-show="activeTab === 'journey'" class="travel-board-section" aria-labelledby="travel-board-title">
-      <div class="travel-hero">
-        <div>
-          <p class="section-kicker">共同旅程</p>
-          <input
-            id="travel-board-title"
-            class="travel-title-input"
-            :value="activeJourneyTrip?.title ?? '旅程行事曆'"
-            aria-label="旅程名稱"
-            @change="updateActiveJourneyTitle(getInputValue($event))"
-            @blur="updateActiveJourneyTitle(getInputValue($event))"
-          />
-          <p>{{ activeJourneyDateRange }} · {{ journeyTripCountdownLabel }}</p>
-        </div>
-        <div class="travel-progress-ring" :style="{ '--travel-progress': `${activeJourneyProgress}%` }">
-          <strong>{{ activeJourneyProgress }}%</strong>
-          <span>完成</span>
-        </div>
-      </div>
-
-      <div class="travel-trip-row">
-        <select :value="activeJourneyTrip?.id ?? ''" aria-label="選擇旅程" @change="selectJourneyTripFromEvent">
-          <option v-for="trip in journeyTripOptions" :key="trip.id" :value="trip.id">
-            {{ trip.title }} · {{ formatJourneyDateLabel(trip.startDate) }}
-          </option>
-        </select>
-        <div class="travel-trip-actions">
-          <button class="ghost-button" type="button" @click="createBlankJourneyTrip">新增旅程</button>
-          <button class="ghost-button" type="button" @click="autoScheduleActiveJourney">自動排時段</button>
-          <button class="ghost-button" type="button" @click="journeyPanelMode = 'import'">匯入</button>
-        </div>
-      </div>
-
-      <div class="travel-mode-switch" role="tablist" aria-label="旅程檢視">
-        <button type="button" :class="{ active: journeyPanelMode === 'schedule' }" @click="journeyPanelMode = 'schedule'">行事曆</button>
-        <button type="button" :class="{ active: journeyPanelMode === 'import' }" @click="journeyPanelMode = 'import'">資料工具</button>
-      </div>
-
-      <div class="travel-stat-grid" aria-label="旅程總覽">
-        <article v-for="stat in journeySummaryStats" :key="stat.label">
-          <span>{{ stat.label }}</span>
-          <strong>{{ stat.value }}</strong>
-        </article>
-      </div>
-
-      <template v-if="journeyPanelMode === 'schedule'">
-        <div class="travel-calendar-card" aria-label="旅程月曆">
-          <div class="travel-calendar-head">
-            <div>
-              <span>Itinerary</span>
-              <strong>{{ activeJourneyMonthLabel }}</strong>
-            </div>
-            <small>{{ activeJourneyDayIndex + 1 }} / {{ activeJourneyDays.length }}</small>
-          </div>
-          <div class="travel-weekdays" aria-hidden="true">
-            <span>一</span>
-            <span>二</span>
-            <span>三</span>
-            <span>四</span>
-            <span>五</span>
-            <span>六</span>
-            <span>日</span>
-          </div>
-          <div class="travel-calendar-grid">
-            <button
-              v-for="cell in journeyCalendarCells"
-              :key="cell.id"
-              type="button"
-              :disabled="cell.isBlank"
-              :class="{ active: cell.isActive, today: cell.isToday, blank: cell.isBlank }"
-              @click="!cell.isBlank && selectJourneyDay(cell.id)"
-            >
-              <span>{{ cell.dayNumber || '' }}</span>
-              <strong>{{ cell.label }}</strong>
-              <em>{{ cell.city }}</em>
-              <i v-if="cell.total">{{ cell.done }}/{{ cell.total }}</i>
-            </button>
-          </div>
-        </div>
-
-        <article v-if="activeJourneyDay" class="travel-day-panel">
-          <div class="travel-day-panel-head">
-            <div>
-              <p class="section-kicker">{{ activeJourneyDay.dayLabel }} · {{ formatJourneyDateLabel(activeJourneyDay.date) }}</p>
-              <h3>{{ activeJourneyDay.city || '未設定城市' }}</h3>
-            </div>
-            <span>{{ activeJourneyDayMeta.done }} / {{ activeJourneyDayMeta.entries }}</span>
-          </div>
-
-          <div class="travel-day-fields">
-            <label>
-              <span>日期</span>
-              <input :value="activeJourneyDay.date" type="date" @input="updateJourneyDayField(activeJourneyDay.id, 'date', getInputValue($event))" />
-            </label>
-            <label>
-              <span>城市</span>
-              <input :value="activeJourneyDay.city" @input="updateJourneyDayField(activeJourneyDay.id, 'city', getInputValue($event))" />
-            </label>
-            <label>
-              <span>住宿</span>
-              <input :value="activeJourneyDay.stay" @input="updateJourneyDayField(activeJourneyDay.id, 'stay', getInputValue($event))" />
-            </label>
-          </div>
-
-          <div class="travel-schedule-sections">
-            <section v-for="section in activeJourneyScheduleSections" :key="section.id" class="travel-schedule-section">
-              <div class="travel-schedule-heading">
-                <span>{{ section.label }}</span>
-                <small>{{ section.caption }}</small>
-              </div>
-              <ol class="travel-timeline">
-                <li v-for="entry in section.entries" :key="entry.id" class="travel-event" :class="{ done: entry.done }">
-                  <div class="travel-event-time">
-                    <label class="travel-time-input">
-                      <span>開始</span>
-                      <input
-                        :value="entry.time"
-                        type="time"
-                        step="60"
-                        aria-label="開始時間"
-                        @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', getInputValue($event))"
-                      />
-                    </label>
-                    <label class="travel-time-input">
-                      <span>結束</span>
-                      <input
-                        :value="entry.endTime"
-                        type="time"
-                        step="60"
-                        aria-label="結束時間"
-                        @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'endTime', getInputValue($event))"
-                      />
-                    </label>
-                    <button class="travel-check" type="button" @click="toggleJourneyEntryDone(activeJourneyDay.id, entry.id)">
-                      {{ entry.done ? '✓' : '+' }}
-                    </button>
-                  </div>
-                  <div class="travel-event-body">
-                    <input class="travel-event-title" :value="entry.plan" placeholder="行程安排" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', getInputValue($event))" />
-                    <div class="travel-event-meta">
-                      <input :value="entry.transport" placeholder="交通工具" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', getInputValue($event))" />
-                      <input :value="entry.duration" placeholder="車程/時間" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', getInputValue($event))" />
-                    </div>
-                    <textarea :value="entry.note" placeholder="備註" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', getTextareaValue($event))"></textarea>
-                    <button class="ghost-button travel-remove-entry" type="button" @click="removeJourneyEntry(activeJourneyDay.id, entry.id)">移除</button>
-                  </div>
-                </li>
-              </ol>
-            </section>
-          </div>
-          <p v-if="!activeJourneyDayEntries.length" class="empty-photo-note">這一天還沒有行程，可以先新增一筆。</p>
-
-          <div class="travel-actions">
-            <button class="soft-button" type="button" @click="addJourneyEntry(activeJourneyDay.id)">新增行程</button>
-            <button class="ghost-button" type="button" @click="addJourneyDay">新增一天</button>
-            <button class="ghost-button" type="button" @click="removeJourneyDay(activeJourneyDay.id)">刪除這天</button>
-          </div>
-        </article>
-      </template>
-
-      <template v-else>
-        <div class="travel-import-panel" aria-labelledby="travel-import-title">
-          <div class="section-title-row">
-            <div>
-              <p class="section-kicker">匯入旅程</p>
-              <h2 id="travel-import-title">從表格或圖片產生行事曆</h2>
-            </div>
-          </div>
-          <p class="travel-import-help">{{ journeyImportHelp }}</p>
-          <div class="travel-import-actions">
-            <label class="import-button">
-              <input type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values,image/*" :disabled="journeyImportBusy" @change="importJourneyFile" />
-              匯入檔案
-            </label>
-            <button class="soft-button" type="button" :disabled="journeyImportBusy || !journeyImportText.trim()" @click="importJourneyText">解析貼上內容</button>
-          </div>
-          <textarea v-model="journeyImportText" class="travel-import-textarea" placeholder="貼上 Day、日期、城市、行程安排、住宿、交通工具、車程/時間、備註的表格文字"></textarea>
-          <div class="travel-create-row">
-            <input v-model="journeyNewTripTitle" placeholder="新旅程名稱" />
-            <button class="ghost-button" type="button" @click="createBlankJourneyTrip">建立空白旅程</button>
-          </div>
-          <div class="travel-create-row">
-            <input v-model="journeyNewDayDate" type="date" aria-label="新增日期" />
-            <button class="ghost-button" type="button" @click="addJourneyDay">新增一天</button>
-          </div>
-          <div class="travel-actions">
-            <button class="wide-soft-button" type="button" @click="exportActiveJourneyCalendar">匯出這次旅程行事曆</button>
-            <button class="ghost-button" type="button" @click="activeJourneyTrip && removeJourneyTrip(activeJourneyTrip.id)">刪除旅程</button>
-          </div>
-          <p v-if="journeyImportMessage" class="empty-photo-note">{{ journeyImportMessage }}</p>
-        </div>
-      </template>
-    </section>
-
-    <section v-show="activeTab === 'memories'" class="timeline-section" aria-labelledby="timeline-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">相識到見面</p>
-          <h2 id="timeline-title">可以左右滑的時間軸</h2>
-        </div>
-      </div>
-      <div class="timeline-track" aria-hidden="true">
-        <span :style="timelineProgressStyle"></span>
-      </div>
-      <div class="timeline-scroll">
-        <article
-          v-for="event in timelineEvents"
-          :key="event.date"
-          class="timeline-card"
-          :class="{ active: currentDayIndex >= event.dayIndex }"
-        >
-          <strong>{{ event.date }}</strong>
-          <h3>{{ event.title }}</h3>
-          <p>{{ event.text }}</p>
-        </article>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="message-section" aria-labelledby="message-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">每日紙飛機</p>
-          <h2 id="message-title">寄一句今天的想念</h2>
-        </div>
-      </div>
-      <textarea v-model="dailyMessage" maxlength="80" placeholder="今天的紙飛機"></textarea>
-      <div class="message-actions">
-        <span>{{ dailyMessage.length }} / 80</span>
-        <div>
-          <button class="ghost-button" type="button" @click="clearDailyMessage">清空</button>
-          <button class="soft-button" type="button" @click="saveDailyMessage">保存</button>
-        </div>
-      </div>
-      <p class="paper-note">{{ savedMessageLine }}</p>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="question-section" aria-labelledby="question-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">每日問題卡</p>
-          <h2 id="question-title">{{ todayQuestion.prompt }}</h2>
-        </div>
-      </div>
-      <p class="question-hint">{{ todayQuestion.hint }}</p>
-      <textarea v-model="dailyAnswer" maxlength="120" placeholder="把今天的答案留在這裡"></textarea>
-      <div class="message-actions">
-        <span>{{ dailyAnswer.length }} / 120</span>
-        <div>
-          <button class="ghost-button" type="button" @click="clearDailyAnswer">清空</button>
-          <button class="soft-button" type="button" @click="saveDailyAnswer">保存</button>
-        </div>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'memories'" class="secret-code-section" aria-labelledby="secret-code-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">雙人暗號</p>
-          <h2 id="secret-code-title">{{ secretCodeUnlocked ? '隱藏卡片已開啟' : '輸入只有你們懂的詞' }}</h2>
-        </div>
-      </div>
-      <div class="secret-code-row">
-        <input v-model="secretCodeInput" maxlength="16" placeholder="輸入暗號" />
-        <button class="soft-button" type="button" @click="unlockSecretCode">解鎖</button>
-      </div>
-      <div class="secret-code-row">
-        <input v-model="newSecretCode" maxlength="16" placeholder="新增暗號" />
-        <button class="ghost-button" type="button" @click="addCustomSecretCode">加入</button>
-      </div>
-      <div v-if="customSecretCodes.length" class="secret-code-list">
-        <button v-for="code in customSecretCodes" :key="code" type="button" @click="removeCustomSecretCode(code)">
-          {{ code }} ×
-        </button>
-      </div>
-      <p class="hidden-card" :class="{ unlocked: secretCodeUnlocked }">
-        {{ secretCodeUnlocked ? hiddenCardLine : '卡片還在信封裡。' }}
-      </p>
-    </section>
-
-    <section v-show="activeTab === 'memories'" class="photo-wall-section" aria-labelledby="photo-wall-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">照片回憶牆</p>
-          <h2 id="photo-wall-title">把可以公開在本機的小畫面收起來</h2>
-        </div>
-      </div>
-      <label class="photo-upload">
-        <input type="file" accept="image/*" multiple @change="addMemoryPhotos" />
-        加入照片
-      </label>
-      <div v-if="photoFilmstrip.length" class="photo-filmstrip" aria-label="回憶膠卷">
-        <figure
-          v-for="photo in photoFilmstrip"
-          :key="`film-${photo.id}`"
-          :style="{ '--film-rotate': photo.rotate }"
-        >
-          <img :src="photo.dataUrl" :alt="photo.name" />
-          <figcaption>
-            <strong>{{ photo.dateLabel }}</strong>
-            <span>{{ photo.name }}</span>
-          </figcaption>
-        </figure>
-      </div>
-      <div v-if="memoryPhotos.length" class="photo-grid">
-        <figure v-for="photo in memoryPhotos" :key="photo.id">
-          <img :src="photo.dataUrl" :alt="photo.name" />
-          <figcaption>
-            <span>{{ photo.name }}</span>
-            <button type="button" @click="removeMemoryPhoto(photo.id)">移除</button>
-          </figcaption>
-        </figure>
-      </div>
-      <p v-else class="empty-photo-note">照片只會存在這台裝置裡。</p>
-    </section>
-
-    <section v-show="activeTab === 'memories'" class="wish-section" aria-labelledby="wish-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">微願望瓶</p>
-          <h2 id="wish-title">把想一起做的小事先放進來</h2>
-        </div>
-        <span class="date-pill">{{ wishes.filter((wish) => wish.done).length }} / {{ wishes.length }}</span>
-      </div>
-      <div class="wish-input-row">
-        <input v-model="newWish" maxlength="36" placeholder="例如：一起看一次夜景" @keyup.enter="addWish" />
-        <button class="soft-button" type="button" @click="addWish">加入</button>
-      </div>
-      <div v-if="wishes.length" class="wish-list">
-        <article v-for="wish in wishes" :key="wish.id" :class="{ done: wish.done }">
-          <button type="button" @click="toggleWish(wish.id)">{{ wish.done ? '✓' : '+' }}</button>
-          <p>{{ wish.text }}</p>
-          <button type="button" @click="removeWish(wish.id)">移除</button>
-        </article>
-      </div>
-      <p v-else class="empty-photo-note">願望瓶還是空的，先放一件很小的事就好。</p>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="mood-section" aria-labelledby="mood-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">今日心情天氣</p>
-          <h2 id="mood-title">{{ selectedMood ? selectedMood.label : '選一種今天的天氣' }}</h2>
-        </div>
-      </div>
-      <div class="mood-options">
-        <button
-          v-for="mood in moodOptions"
-          :key="mood.id"
-          class="mood-button"
-          :class="{ active: selectedMoodId === mood.id }"
-          type="button"
-          @click="selectMood(mood.id)"
-        >
-          <span>{{ mood.icon }}</span>
-          <strong>{{ mood.label }}</strong>
-        </button>
-      </div>
-      <p class="mood-line">{{ selectedMoodLine }}</p>
-      <div class="mood-bottle" aria-label="心情瓶">
-        <p class="section-kicker">心情瓶</p>
-        <div class="bottle-glass">
-          <span
-            v-for="dot in moodBottleDots"
-            :key="dot.id"
-            class="bottle-dot"
-            :class="`mood-dot-${dot.moodId}`"
-            :style="{ left: dot.left, bottom: dot.bottom }"
-          ></span>
-        </div>
-        <p>已收進 {{ moodHistory.length }} 顆心情光點</p>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="secret-section" aria-labelledby="secret-title">
-      <div>
-        <p class="section-kicker">悄悄話</p>
-        <h2 id="secret-title">藏起來的一句話</h2>
-      </div>
-      <button
-        class="secret-button"
-        :class="{ charging: secretPressing }"
-        type="button"
-        @pointerdown="startSecretPress"
-        @pointerup="cancelSecretPress"
-        @pointerleave="cancelSecretPress"
-        @pointercancel="cancelSecretPress"
-      >
-        <span class="secret-charge" aria-hidden="true"></span>
-        {{ secretRevealed ? secretWhisper : '信封未開' }}
-      </button>
-      <button v-if="secretRevealed" class="ghost-button secret-mail-button" type="button" :disabled="secretMailed" @click="mailSecret">
-        {{ secretMailed ? '已收進信封' : '收進信封' }}
-      </button>
-    </section>
-
-    <section v-show="activeTab === 'today'" class="task-section" aria-labelledby="task-title">
-      <div>
-        <p class="section-kicker">今日小任務</p>
-        <h2 id="task-title">{{ todayTask }}</h2>
-      </div>
-      <button class="task-button" :class="{ completed: taskCompleted }" type="button" @click="toggleTask">
-        <span class="checkmark" aria-hidden="true">✓</span>
-        <span>{{ taskCompleted ? '已完成' : '完成' }}</span>
-      </button>
-    </section>
-
-    <section v-show="activeTab === 'prepare'" class="settings-section" aria-labelledby="settings-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">個人化</p>
-          <h2 id="settings-title">把這個倒數調成你們的樣子</h2>
-        </div>
-      </div>
-      <div class="settings-grid">
-        <label>
-          <span>女主角</span>
-          <input v-model="settingsDraft.girlName" maxlength="18" />
-        </label>
-        <label>
-          <span>男主角</span>
-          <input v-model="settingsDraft.boyName" maxlength="18" />
-        </label>
-        <label>
-          <span>開始日期</span>
-          <input v-model="settingsDraft.startDate" type="date" />
-        </label>
-        <label>
-          <span>開始時間</span>
-          <input v-model="settingsDraft.startTime" type="time" step="60" />
-        </label>
-        <label>
-          <span>目標日期</span>
-          <input v-model="settingsDraft.targetDate" type="date" />
-        </label>
-        <label>
-          <span>目標時間</span>
-          <input v-model="settingsDraft.targetTime" type="time" step="60" />
-        </label>
-      </div>
-      <div class="date-timeline-control">
-        <div>
-          <span>{{ settingsDraft.startDate }}</span>
-          <strong>{{ targetOffsetDays }} 天後見面</strong>
-          <span>{{ settingsDraft.targetDate }}</span>
-        </div>
-        <label>
-          <span :style="targetTimelineStyle" aria-hidden="true"></span>
-          <input v-model.number="targetOffsetDays" type="range" min="1" :max="targetOffsetMax" />
-        </label>
-      </div>
-      <label class="welcome-setting">
-        <span>首頁小句子</span>
-        <textarea v-model="settingsDraft.welcomeLine" maxlength="42"></textarea>
-      </label>
-      <div class="theme-guide">
-        <span aria-hidden="true"></span>
-        <p>想換成暖光、清風或夜航？主題開關藏在這裡。</p>
-      </div>
-      <div class="theme-picker" aria-label="主題色">
-        <button
-          v-for="theme in themeOptions"
-          :key="theme.id"
-          class="ghost-button"
-          :class="{ selected: settingsDraft.theme === theme.id }"
-          type="button"
-          @click="previewThemeSelection(theme.id)"
-        >
-          {{ theme.label }}
-        </button>
-      </div>
-      <p v-if="themePreviewing" class="theme-preview-note">預覽中，保存後才會固定使用這個主題。</p>
-      <label class="toggle-row">
-        <input v-model="settingsDraft.reducedMotion" type="checkbox" />
-        <span>減少動畫</span>
-      </label>
-      <label class="toggle-row">
-        <input v-model="settingsDraft.soundFeedback" type="checkbox" />
-        <span>互動音效</span>
-      </label>
-      <div class="settings-actions">
-        <button class="soft-button" type="button" @click="saveSettings">保存設定</button>
-        <button class="ghost-button" type="button" @click="resetSettings">恢復預設</button>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'prepare'" class="suitcase-section" aria-labelledby="suitcase-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">小笨蛋行李箱</p>
-          <h2 id="suitcase-title">出發前慢慢收好</h2>
-        </div>
-        <span class="date-pill">{{ suitcaseProgress }}%</span>
-      </div>
-      <div class="suitcase-grid">
-        <button
-          v-for="item in suitcaseItems"
-          :key="item"
-          class="suitcase-item"
-          :class="{ packed: suitcaseChecked.includes(item), packing: packingItems.includes(item) }"
-          type="button"
-          @click="toggleSuitcaseItem(item)"
-        >
-          <span>{{ suitcaseChecked.includes(item) ? '✓' : '+' }}</span>
-          {{ item }}
-        </button>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'prepare'" class="prep-section" aria-labelledby="prep-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">見面前準備儀表</p>
-          <h2 id="prep-title">慢慢把自己準備好</h2>
-        </div>
-      </div>
-      <div class="prep-list">
-        <div v-for="stat in preparationStats" :key="stat.label" class="prep-meter">
-          <div>
-            <span>{{ stat.label }}</span>
-            <strong>{{ stat.value }}%</strong>
-          </div>
-          <div class="prep-track">
-            <span :style="{ width: `${stat.value}%` }"></span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'prepare'" class="meeting-plan-section" aria-labelledby="meeting-plan-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">見面留白卡</p>
-          <h2 id="meeting-plan-title">不用排滿，只留幾個想記住的瞬間</h2>
-        </div>
-        <span class="date-pill">{{ meetingMoments.length }} / {{ meetingMomentItems.length }}</span>
-      </div>
-      <div class="meeting-moment-list">
-        <button
-          v-for="item in meetingMomentItems"
-          :key="item.id"
-          class="meeting-moment"
-          :class="{ done: meetingMoments.includes(item.id) }"
-          type="button"
-          @click="toggleMeetingMoment(item.id)"
-        >
-          <span>{{ meetingMoments.includes(item.id) ? '✓' : '+' }}</span>
-          {{ item.label }}
-        </button>
-      </div>
-    </section>
-
-    <section v-if="isMeetingDay" v-show="activeTab === 'prepare'" class="meeting-checklist-section" aria-labelledby="meeting-checklist-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">見面當天 checklist</p>
-          <h2 id="meeting-checklist-title">把今天一格一格點亮</h2>
-        </div>
-        <span class="date-pill">{{ meetingChecklistProgress }}%</span>
-      </div>
-      <div class="meeting-list">
-        <button
-          v-for="item in meetingChecklistItems"
-          :key="item"
-          class="meeting-item"
-          :class="{ done: meetingChecklist.includes(item) }"
-          type="button"
-          @click="toggleMeetingChecklist(item)"
-        >
-          <span>{{ meetingChecklist.includes(item) ? '✓' : '+' }}</span>
-          {{ item }}
-        </button>
-      </div>
-    </section>
-
-    <section v-show="activeTab === 'prepare'" class="data-tools-section" aria-labelledby="data-tools-title">
-      <div class="section-title-row">
-        <div>
-          <p class="section-kicker">資料工具</p>
-          <h2 id="data-tools-title">備份、匯入與今日清理</h2>
-        </div>
-      </div>
-      <div class="data-actions">
-        <button class="soft-button" type="button" @click="exportData">匯出 JSON</button>
-        <label class="import-button">
-          <input type="file" accept="application/json" @change="importData" />
-          匯入 JSON
-        </label>
-        <button class="soft-button calendar-button" type="button" @click="exportMeetingCalendar">匯出行事曆</button>
-        <button class="soft-button" type="button" :disabled="cloudSyncBusy" @click="syncCloudNow(true)">
-          {{ cloudSyncBusy ? '同步中' : '同步雲端' }}
-        </button>
-        <button class="ghost-button" type="button" @click="resetToday">重置今日</button>
-        <button class="ghost-button" type="button" @click="lockApp">鎖定</button>
-      </div>
-      <p class="cloud-sync-note">{{ cloudStatus }}</p>
-      <div v-if="pendingImport" class="import-preview">
-        <p>{{ pendingImportSummary }}</p>
-        <div class="import-mode-row">
-          <button class="ghost-button" :class="{ selected: importMode === 'merge' }" type="button" @click="importMode = 'merge'">合併</button>
-          <button class="ghost-button" :class="{ selected: importMode === 'replace' }" type="button" @click="importMode = 'replace'">覆蓋</button>
-        </div>
-        <div class="settings-actions">
-          <button class="soft-button" type="button" @click="applyImportData">套用匯入</button>
-          <button class="ghost-button" type="button" @click="cancelImportData">取消</button>
-        </div>
-      </div>
-      <p v-if="importMessage" class="empty-photo-note">{{ importMessage }}</p>
-    </section>
-
-    <section v-show="activeTab === 'memories'" class="capsule-section" aria-labelledby="capsule-title">
-      <div class="capsule-header">
-        <div>
-          <p class="section-kicker">回憶膠囊</p>
-          <h2 id="capsule-title">{{ unlockedCount }} / {{ journeyDays.length }}</h2>
-        </div>
-        <span class="date-pill">{{ dateKey }}</span>
-      </div>
-
-      <ol class="capsule-list">
-        <li
-          v-for="capsule in visibleCapsulesDisplay"
-          :key="capsule.text"
-          :class="{ locked: !capsule.unlocked, newest: capsule.unlocked && capsule.index === unlockedCount - 1 }"
-        >
-          <button
-            class="capsule-card"
-            :class="{ flipped: capsule.flipped }"
-            type="button"
-            :aria-label="capsule.unlocked ? `打開 ${capsule.dateLabel} 膠囊` : `查看 ${capsule.dateLabel} 膠囊解鎖時間`"
-            @click="toggleCapsule(capsule.index)"
-          >
-            <span class="capsule-face capsule-front">
-              <span class="capsule-index">{{ String(capsule.index + 1).padStart(2, '0') }}</span>
-              <span>{{ capsule.unlocked ? capsule.dateLabel : `${capsule.dateLabel} 尚未解鎖` }}</span>
-            </span>
-            <span class="capsule-face capsule-back">
-              <span>{{ capsule.unlocked ? capsule.text : capsule.lockedText }}</span>
-            </span>
-          </button>
-        </li>
-      </ol>
-      <button class="wide-soft-button" type="button" @click="capsuleShowAll = !capsuleShowAll">
-        {{ capsuleShowAll ? '只看最近 7 天' : '查看全部膠囊' }}
-      </button>
-    </section>
-
-    <nav class="bottom-nav" aria-label="頁面分區">
-      <span class="nav-indicator" :style="navIndicatorStyle" aria-hidden="true"></span>
-      <button type="button" :class="{ active: activeTab === 'countdown' }" @click="activeTab = 'countdown'">倒數</button>
-      <button type="button" :class="{ active: activeTab === 'today' }" @click="activeTab = 'today'">今日</button>
-      <button type="button" :class="{ active: activeTab === 'journey' }" @click="activeTab = 'journey'">旅程</button>
-      <button type="button" :class="{ active: activeTab === 'memories' }" @click="activeTab = 'memories'">回憶</button>
-      <button type="button" :class="{ active: activeTab === 'prepare' }" @click="activeTab = 'prepare'">準備</button>
-    </nav>
-    </template>
   </main>
 </template>
