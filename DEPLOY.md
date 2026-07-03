@@ -78,3 +78,56 @@ npm start
 ## 注意
 
 不要把真正密碼寫進 GitHub repo。密碼應該只放在 Cloud Run 的 `APP_PASSWORD` 環境變數中。
+
+## 4. Cloud Run 後端自動更新
+
+前端 GitHub Pages 會在 push 後自動更新。若也想讓 `cloud-api/` 後端自動部署到 Cloud Run，需要再設定一次 GitHub Actions secret。
+
+先在 Cloud Shell 建立部署用 service account：
+
+```bash
+gcloud config set project erudite-bloom-249605
+
+gcloud iam service-accounts create github-cloud-run-deployer \
+  --display-name="GitHub Cloud Run Deployer"
+
+gcloud projects add-iam-policy-binding erudite-bloom-249605 \
+  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+  --role="roles/run.admin"
+
+gcloud projects add-iam-policy-binding erudite-bloom-249605 \
+  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+  --role="roles/cloudbuild.builds.editor"
+
+gcloud projects add-iam-policy-binding erudite-bloom-249605 \
+  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.writer"
+
+gcloud projects add-iam-policy-binding erudite-bloom-249605 \
+  --member="serviceAccount:github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+```
+
+產生 GitHub secret 要用的 JSON key：
+
+```bash
+gcloud iam service-accounts keys create gcp-service-account-key.json \
+  --iam-account="github-cloud-run-deployer@erudite-bloom-249605.iam.gserviceaccount.com"
+
+cat gcp-service-account-key.json
+```
+
+到 GitHub repo 的 `Settings -> Secrets and variables -> Actions -> Secrets` 新增：
+
+```text
+GCP_SERVICE_ACCOUNT_KEY=<貼上整份 gcp-service-account-key.json 內容>
+CLOUD_RUN_SESSION_SECRET=<貼上一段長隨機字串>
+```
+
+`CLOUD_RUN_SESSION_SECRET` 可以在 Cloud Shell 產生：
+
+```bash
+openssl rand -base64 32
+```
+
+設定完成後，只要 push 的內容包含 `cloud-api/**`，`.github/workflows/deploy-cloud-run.yml` 就會自動部署 Cloud Run。也可以到 GitHub Actions 手動執行 `Deploy Cloud Run API`。
