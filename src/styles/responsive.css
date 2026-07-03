@@ -1,0 +1,128 @@
+@media (max-width: 360px) {
+  .app-shell {
+    padding-inline: 12px;
+  }
+
+  .hero-section,
+  .flight-section,
+  .task-section,
+  .message-section,
+  .question-section,
+  .secret-code-section,
+  .photo-wall-section,
+  .mood-section,
+  .secret-section,
+  .suitcase-section,
+  .checkin-section,
+  .fortune-section,
+  .timeline-section,
+  .prep-section,
+  .meeting-checklist-section,
+  .pwa-status-section,
+  .arrival-mode-section,
+  .today-mode-section,
+  .data-tools-section,
+  .ritual-section,
+  .settings-section,
+  .wish-section,
+  .meeting-plan-section,
+  .travel-board-section,
+  .journey-summary-section,
+  .radar-section,
+  .capsule-section {
+    border-radius: 20px;
+  }
+
+  .task-section {
+    grid-template-columns: 1fr;
+  }
+
+  .task-button {
+    width: 100%;
+  }
+
+  .mood-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .suitcase-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .radar-choices,
+  .photo-grid,
+  .data-actions,
+  .travel-trip-row,
+  .travel-import-actions,
+  .travel-create-row,
+  .travel-actions,
+  .travel-day-fields,
+  .travel-event-meta,
+  .summary-grid,
+  .settings-grid,
+  .theme-picker,
+  .settings-actions,
+  .wish-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-hero,
+  .travel-event {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .travel-calendar-grid {
+    gap: 4px;
+  }
+
+  .travel-calendar-grid button {
+    min-height: 56px;
+    padding: 6px 4px;
+  }
+
+  .travel-calendar-grid em {
+    display: none;
+  }
+
+  .travel-progress-ring {
+    justify-self: start;
+  }
+
+  .travel-event-time {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .travel-event-time::after {
+    display: none;
+  }
+
+  .travel-remove-entry {
+    justify-self: stretch;
+  }
+
+  .arrival-mode-section,
+  .date-timeline-control > div {
+    grid-template-columns: 1fr;
+  }
+
+  .arrival-ready-ring {
+    justify-self: start;
+  }
+
+  .arrival-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .secret-code-row {
+    grid-template-columns: 1fr;
+  }
+
+  .checkin-dots {
+    gap: 4px;
+  }
+}

@@ -5,6 +5,15 @@ export type Countdown = {
   seconds: number;
 };
 
+export type CountdownUnit = keyof Countdown;
+
+export type BurstParticle = {
+  id: number;
+  x: number;
+  y: number;
+  delay: string;
+};
+
 export type JourneyDay = {
   dateLabel: string;
   note: string;
@@ -92,6 +101,7 @@ export type MeetingMoment = {
 export type JourneyEntry = {
   id: string;
   time: string;
+  endTime: string;
   city: string;
   plan: string;
   stay: string;
@@ -99,6 +109,28 @@ export type JourneyEntry = {
   duration: string;
   note: string;
   done: boolean;
+};
+
+export type JourneyEditableEntryField = 'time' | 'endTime' | 'city' | 'plan' | 'stay' | 'transport' | 'duration' | 'note';
+
+export type JourneyImportRow = {
+  dayLabel: string;
+  date: string;
+  city: string;
+  plan: string;
+  stay: string;
+  transport: string;
+  duration: string;
+  note: string;
+};
+
+export type JourneyPanelMode = 'schedule' | 'import';
+
+export type JourneyScheduleSection = {
+  id: string;
+  label: string;
+  caption: string;
+  entries: JourneyEntry[];
 };
 
 export type JourneyPlanDay = {

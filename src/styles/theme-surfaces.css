@@ -1,0 +1,620 @@
+.hero-section,
+.flight-section,
+.task-section,
+.message-section,
+.question-section,
+.secret-code-section,
+.photo-wall-section,
+.mood-section,
+.secret-section,
+.suitcase-section,
+.checkin-section,
+.fortune-section,
+.timeline-section,
+.prep-section,
+.meeting-checklist-section,
+.pwa-status-section,
+.today-mode-section,
+.data-tools-section,
+.ritual-section,
+.settings-section,
+.wish-section,
+.meeting-plan-section,
+.journey-summary-section,
+.radar-section,
+.capsule-section {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(36, 48, 71, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 18px 50px rgba(36, 48, 71, 0.08);
+  backdrop-filter: blur(18px);
+  animation: card-arrive 620ms ease both;
+}
+
+.hero-section {
+  padding: 28px 20px 22px;
+}
+
+.theater-section {
+  position: relative;
+  min-height: 250px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 28px 20px;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(246, 200, 111, 0.32), transparent 28%),
+    linear-gradient(150deg, #243047 0%, #40506b 58%, #75b7c5 100%);
+  color: #fffaf7;
+}
+
+.theater-section h1 {
+  position: relative;
+  margin: 10px 0 12px;
+  font-size: clamp(2rem, 11vw, 3.35rem);
+  line-height: 1.08;
+}
+
+.theater-section p {
+  position: relative;
+  margin: 0;
+  font-weight: 750;
+  line-height: 1.6;
+}
+
+.theater-light {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #fff7d5;
+  box-shadow: 0 0 16px rgba(255, 247, 213, 0.86);
+  animation: theater-twinkle 1800ms ease-in-out infinite;
+}
+
+.app-shell.mood-sunny .hero-section {
+  background: rgba(255, 250, 241, 0.82);
+}
+
+.app-shell.mood-cloudy .hero-section {
+  background: rgba(247, 251, 252, 0.86);
+}
+
+.app-shell.mood-rainy .hero-section {
+  background: rgba(241, 248, 252, 0.86);
+}
+
+.app-shell.mood-starry .hero-section {
+  background: rgba(246, 244, 252, 0.86);
+}
+
+.app-shell.theme-mint .hero-section,
+.app-shell.theme-mint .flight-section {
+  background: rgba(242, 252, 249, 0.84);
+}
+
+.app-shell.theme-peach .motion-sky {
+  background:
+    radial-gradient(circle at 20% 18%, rgba(247, 166, 161, 0.13), transparent 22%),
+    radial-gradient(circle at 84% 72%, rgba(246, 200, 111, 0.12), transparent 24%);
+}
+
+.app-shell.theme-peach .aurora-one {
+  background: radial-gradient(circle, rgba(247, 166, 161, 0.34), transparent 68%);
+  animation-name: peach-warm-drift;
+}
+
+.app-shell.theme-peach .aurora-two {
+  background: radial-gradient(circle, rgba(246, 200, 111, 0.24), transparent 68%);
+  animation-name: peach-warm-drift;
+}
+
+.app-shell.theme-peach .orbit-ring {
+  border-color: rgba(247, 166, 161, 0.14);
+  animation-name: peach-soft-orbit;
+}
+
+.app-shell.theme-peach .orbit-two {
+  border-color: rgba(246, 200, 111, 0.14);
+}
+
+.app-shell.theme-peach .sky-star {
+  border-radius: 60% 40% 62% 38%;
+  background: rgba(247, 166, 161, 0.62);
+  box-shadow: 0 0 14px rgba(246, 200, 111, 0.24);
+  animation-name: peach-petal-float;
+}
+
+.app-shell.theme-peach .sky-beam {
+  background: linear-gradient(180deg, transparent, rgba(247, 166, 161, 0.22), transparent);
+}
+
+.app-shell.theme-peach .sky-mote {
+  border-radius: 60% 40% 62% 38%;
+  background: rgba(247, 166, 161, 0.58);
+  box-shadow: 0 0 14px rgba(246, 200, 111, 0.22);
+}
+
+.app-shell.theme-peach .sky-vortex {
+  background:
+    conic-gradient(from 0deg, transparent, rgba(247, 166, 161, 0.1), transparent 22%, rgba(246, 200, 111, 0.08), transparent 52%),
+    radial-gradient(circle, transparent 46%, rgba(255, 255, 255, 0.1), transparent 64%);
+}
+
+.app-shell.theme-mint .motion-sky {
+  background:
+    radial-gradient(circle at 18% 24%, rgba(134, 212, 189, 0.14), transparent 24%),
+    radial-gradient(circle at 80% 70%, rgba(117, 183, 197, 0.14), transparent 26%);
+}
+
+.app-shell.theme-mint .aurora-one {
+  background: radial-gradient(circle, rgba(134, 212, 189, 0.28), transparent 68%);
+  animation-name: mint-current-drift;
+}
+
+.app-shell.theme-mint .aurora-two {
+  background: radial-gradient(circle, rgba(117, 183, 197, 0.24), transparent 68%);
+  animation-name: mint-current-drift;
+}
+
+.app-shell.theme-mint .orbit-ring {
+  border-color: rgba(134, 212, 189, 0.16);
+  animation-name: mint-ripple-orbit;
+}
+
+.app-shell.theme-mint .orbit-two {
+  border-color: rgba(117, 183, 197, 0.16);
+}
+
+.app-shell.theme-mint .sky-star {
+  background: rgba(117, 183, 197, 0.64);
+  box-shadow: 0 0 14px rgba(134, 212, 189, 0.26);
+  animation-name: mint-bubble-rise;
+}
+
+.app-shell.theme-mint .sky-beam {
+  background: linear-gradient(180deg, transparent, rgba(134, 212, 189, 0.22), transparent);
+}
+
+.app-shell.theme-mint .sky-mote {
+  background: rgba(117, 183, 197, 0.58);
+  box-shadow: 0 0 16px rgba(134, 212, 189, 0.28);
+}
+
+.app-shell.theme-mint .sky-vortex {
+  background:
+    conic-gradient(from 0deg, transparent, rgba(134, 212, 189, 0.1), transparent 22%, rgba(117, 183, 197, 0.08), transparent 52%),
+    radial-gradient(circle, transparent 46%, rgba(255, 255, 255, 0.12), transparent 64%);
+}
+
+.app-shell.theme-mint .progress-fill,
+.app-shell.theme-mint .prep-track span,
+.app-shell.theme-mint .timeline-track span {
+  background: linear-gradient(90deg, #86d4bd 0%, #75b7c5 100%);
+  animation-name: mint-flow-glow;
+}
+
+.app-shell.theme-mint .travel-board-section {
+  --travel-accent: #417c73;
+  --travel-accent-strong: #2f6861;
+  --travel-accent-soft: rgba(134, 212, 189, 0.18);
+  --travel-check-bg: rgba(143, 211, 224, 0.32);
+  --travel-check-color: #1f4d4a;
+  --travel-ink: #1f4d4a;
+  --travel-line: rgba(65, 124, 115, 0.12);
+  --travel-muted: #526f70;
+  --travel-panel: rgba(234, 247, 247, 0.72);
+  --travel-ring-center: #eaf7f7;
+  --travel-ring-fill: #417c73;
+  --travel-ring-track: rgba(65, 124, 115, 0.12);
+  --travel-surface: #f8fffd;
+}
+
+.app-shell.theme-mint .travel-progress-ring {
+  background:
+    radial-gradient(circle at center, var(--travel-ring-center) 0 56%, transparent 57%),
+    conic-gradient(var(--travel-ring-fill) var(--travel-progress), var(--travel-ring-track) 0);
+}
+
+.app-shell.theme-mint .travel-check {
+  background: var(--travel-check-bg);
+  color: var(--travel-check-color);
+}
+
+.app-shell.theme-mint .travel-event.done .travel-check {
+  background: var(--travel-accent);
+  color: #fffaf7;
+}
+
+.app-shell.theme-mint .travel-calendar-grid button.active,
+.app-shell.theme-mint .travel-event.done {
+  background: rgba(134, 212, 189, 0.18);
+}
+
+.app-shell.theme-peach .progress-fill,
+.app-shell.theme-peach .prep-track span,
+.app-shell.theme-peach .timeline-track span {
+  animation-name: peach-glow;
+}
+
+.app-shell.theme-peach .travel-board-section {
+  --travel-accent: #d97874;
+  --travel-accent-strong: #9e5856;
+  --travel-accent-soft: rgba(246, 166, 161, 0.18);
+  --travel-check-bg: rgba(249, 216, 215, 0.9);
+  --travel-check-color: #4b3442;
+  --travel-ink: #4b3442;
+  --travel-line: rgba(246, 166, 161, 0.18);
+  --travel-muted: #7d6570;
+  --travel-panel: rgba(255, 247, 242, 0.76);
+  --travel-ring-center: #fff7f2;
+  --travel-ring-fill: #f6a6a1;
+  --travel-ring-track: rgba(246, 166, 161, 0.16);
+  --travel-surface: #fffaf7;
+}
+
+.app-shell.theme-peach .travel-progress-ring {
+  background:
+    radial-gradient(circle at center, var(--travel-ring-center) 0 56%, transparent 57%),
+    conic-gradient(var(--travel-ring-fill) var(--travel-progress), var(--travel-ring-track) 0);
+}
+
+.app-shell.theme-peach .travel-check {
+  background: var(--travel-check-bg);
+  color: var(--travel-check-color);
+}
+
+.app-shell.theme-peach .travel-event.done .travel-check {
+  background: var(--travel-accent);
+  color: #fffaf7;
+}
+
+.app-shell.theme-peach .soft-button::after,
+.app-shell.theme-peach .wide-soft-button::after,
+.app-shell.theme-peach .task-button::after,
+.app-shell.theme-peach .photo-upload::after {
+  background: linear-gradient(110deg, transparent 0%, rgba(246, 200, 111, 0.34) 45%, transparent 62%);
+}
+
+.app-shell.theme-mint .soft-button::after,
+.app-shell.theme-mint .wide-soft-button::after,
+.app-shell.theme-mint .task-button::after,
+.app-shell.theme-mint .photo-upload::after {
+  background: linear-gradient(110deg, transparent 0%, rgba(234, 247, 247, 0.48) 45%, transparent 62%);
+}
+
+.app-shell.theme-night {
+  color: #eef5f4;
+  --night-ink: #101728;
+  --night-panel: rgba(22, 31, 50, 0.92);
+  --night-panel-soft: rgba(42, 55, 82, 0.82);
+  --night-line: rgba(167, 205, 216, 0.18);
+  --night-text: #f1f6f5;
+  --night-muted: #9fb2c3;
+  --night-subtle: #6f8197;
+  --night-cyan: #8fd3e0;
+  --night-teal: #78c8b5;
+  --night-blue: #7d9de8;
+  --night-gold: #e4c06a;
+}
+
+.app-shell.theme-night .travel-board-section {
+  --travel-accent: var(--night-teal);
+  --travel-accent-strong: var(--night-cyan);
+  --travel-accent-soft: rgba(120, 200, 181, 0.14);
+  --travel-check-bg: rgba(143, 211, 224, 0.16);
+  --travel-check-color: var(--night-text);
+  --travel-ink: var(--night-text);
+  --travel-line: var(--night-line);
+  --travel-muted: var(--night-muted);
+  --travel-panel: rgba(42, 55, 82, 0.82);
+  --travel-ring-center: rgba(20, 28, 46, 0.96);
+  --travel-ring-fill: var(--night-cyan);
+  --travel-ring-track: rgba(143, 211, 224, 0.14);
+  --travel-surface: rgba(32, 44, 70, 0.92);
+}
+
+.app-shell.theme-night .hero-section,
+.app-shell.theme-night .flight-section,
+.app-shell.theme-night .task-section,
+.app-shell.theme-night .message-section,
+.app-shell.theme-night .question-section,
+.app-shell.theme-night .secret-code-section,
+.app-shell.theme-night .photo-wall-section,
+.app-shell.theme-night .mood-section,
+.app-shell.theme-night .secret-section,
+.app-shell.theme-night .suitcase-section,
+.app-shell.theme-night .checkin-section,
+.app-shell.theme-night .fortune-section,
+.app-shell.theme-night .timeline-section,
+.app-shell.theme-night .prep-section,
+.app-shell.theme-night .meeting-checklist-section,
+.app-shell.theme-night .pwa-status-section,
+.app-shell.theme-night .arrival-mode-section,
+.app-shell.theme-night .today-mode-section,
+.app-shell.theme-night .data-tools-section,
+.app-shell.theme-night .ritual-section,
+.app-shell.theme-night .settings-section,
+.app-shell.theme-night .wish-section,
+.app-shell.theme-night .meeting-plan-section,
+.app-shell.theme-night .travel-board-section,
+.app-shell.theme-night .journey-summary-section,
+.app-shell.theme-night .radar-section,
+.app-shell.theme-night .capsule-section {
+  border-color: rgba(188, 227, 222, 0.14);
+  background:
+    linear-gradient(180deg, rgba(43, 55, 82, 0.9), rgba(22, 31, 50, 0.92)),
+    var(--night-panel);
+  color: var(--night-text);
+  box-shadow: 0 18px 56px rgba(8, 14, 28, 0.36);
+}
+
+.app-shell.theme-night .motion-sky {
+  background:
+    radial-gradient(circle at 50% 8%, rgba(246, 200, 111, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(16, 22, 38, 0.44), rgba(10, 14, 26, 0.78));
+}
+
+.app-shell.theme-night .aurora {
+  opacity: 0.68;
+}
+
+.app-shell.theme-night .sky-beam {
+  background: linear-gradient(180deg, transparent, rgba(143, 211, 224, 0.28), transparent);
+}
+
+.app-shell.theme-night .sky-mote {
+  background: rgba(143, 211, 224, 0.72);
+  box-shadow: 0 0 18px rgba(143, 211, 224, 0.42);
+}
+
+.app-shell.theme-night .sky-vortex {
+  background:
+    conic-gradient(from 0deg, transparent, rgba(143, 211, 224, 0.12), transparent 22%, rgba(125, 157, 232, 0.1), transparent 52%),
+    radial-gradient(circle, transparent 46%, rgba(143, 211, 224, 0.08), transparent 64%);
+}
+
+.app-shell.theme-night .opening-finale {
+  background:
+    radial-gradient(circle at 50% 48%, transparent 0 18%, rgba(143, 211, 224, 0.16) 19%, transparent 38%),
+    conic-gradient(from 180deg, transparent, rgba(143, 211, 224, 0.18), transparent, rgba(125, 157, 232, 0.16), transparent);
+}
+
+.app-shell.theme-night .opening-chapters i {
+  border-color: rgba(143, 211, 224, 0.22);
+  background: rgba(143, 211, 224, 0.08);
+  color: #cfe9e7;
+}
+
+.app-shell.theme-night h1,
+.app-shell.theme-night h2,
+.app-shell.theme-night h3,
+.app-shell.theme-night strong,
+.app-shell.theme-night .section-title-row h2,
+.app-shell.theme-night .task-section h2,
+.app-shell.theme-night .capsule-header h2 {
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .eyebrow,
+.app-shell.theme-night .section-kicker,
+.app-shell.theme-night .date-pill,
+.app-shell.theme-night .target-time,
+.app-shell.theme-night .welcome-line,
+.app-shell.theme-night .question-hint,
+.app-shell.theme-night .empty-photo-note,
+.app-shell.theme-night .message-actions,
+.app-shell.theme-night .mood-bottle p {
+  color: var(--night-muted);
+}
+
+.app-shell.theme-night .countdown-grid div,
+.app-shell.theme-night .closeness-panel,
+.app-shell.theme-night .today-focus-list article,
+.app-shell.theme-night .daily-receipt,
+.app-shell.theme-night .paper-note,
+.app-shell.theme-night .mood-line,
+.app-shell.theme-night .fortune-line,
+.app-shell.theme-night .hidden-card,
+.app-shell.theme-night .summary-grid article,
+.app-shell.theme-night .import-preview,
+.app-shell.theme-night .offline-cosmos,
+.app-shell.theme-night .install-guide-card,
+.app-shell.theme-night .photo-filmstrip figure,
+.app-shell.theme-night .photo-grid figure,
+.app-shell.theme-night .date-timeline-control,
+.app-shell.theme-night .wish-list article,
+.app-shell.theme-night .meeting-moment,
+.app-shell.theme-night .travel-trip-row select,
+.app-shell.theme-night .travel-mode-switch,
+.app-shell.theme-night .travel-mode-switch button.active,
+.app-shell.theme-night .travel-stat-grid article,
+.app-shell.theme-night .travel-calendar-card,
+.app-shell.theme-night .travel-calendar-grid button,
+.app-shell.theme-night .travel-day-panel,
+.app-shell.theme-night .travel-day-fields input,
+.app-shell.theme-night .travel-event,
+.app-shell.theme-night .travel-event-time input,
+.app-shell.theme-night .travel-event-body input,
+.app-shell.theme-night .travel-event-body textarea,
+.app-shell.theme-night .travel-import-panel,
+.app-shell.theme-night .travel-import-textarea,
+.app-shell.theme-night .travel-create-row input,
+.app-shell.theme-night .timeline-card,
+.app-shell.theme-night .prep-meter,
+.app-shell.theme-night .suitcase-item,
+.app-shell.theme-night .meeting-item,
+.app-shell.theme-night .capsule-face,
+.app-shell.theme-night .bottle-glass,
+.app-shell.theme-night .message-section textarea,
+.app-shell.theme-night .question-section textarea,
+.app-shell.theme-night .settings-grid input,
+.app-shell.theme-night .welcome-setting textarea,
+.app-shell.theme-night .wish-input-row input,
+.app-shell.theme-night .secret-code-row input,
+.app-shell.theme-night .mood-button {
+  border-color: var(--night-line);
+  background:
+    linear-gradient(180deg, rgba(77, 95, 130, 0.42), rgba(40, 52, 79, 0.56)),
+    var(--night-panel-soft);
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .mood-button span,
+.app-shell.theme-night .date-pill,
+.app-shell.theme-night .capsule-index,
+.app-shell.theme-night .checkmark,
+.app-shell.theme-night .travel-check {
+  background: rgba(143, 211, 224, 0.16);
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .mood-button.active,
+.app-shell.theme-night .timeline-card.active,
+.app-shell.theme-night .wish-list article.done,
+.app-shell.theme-night .meeting-moment.done,
+.app-shell.theme-night .travel-calendar-grid button.active,
+.app-shell.theme-night .travel-event.done,
+.app-shell.theme-night .suitcase-item.packed,
+.app-shell.theme-night .meeting-item.done {
+  background: rgba(120, 200, 181, 0.14);
+}
+
+.app-shell.theme-night .today-focus-list p,
+.app-shell.theme-night .radar-section p,
+.app-shell.theme-night .paper-note,
+.app-shell.theme-night .mood-line,
+.app-shell.theme-night .fortune-line,
+.app-shell.theme-night .summary-line,
+.app-shell.theme-night .summary-grid strong,
+.app-shell.theme-night .import-preview p,
+.app-shell.theme-night .wish-list p,
+.app-shell.theme-night .travel-hero p,
+.app-shell.theme-night .travel-import-help,
+.app-shell.theme-night .travel-stat-grid strong,
+.app-shell.theme-night .travel-calendar-head strong,
+.app-shell.theme-night .travel-day-panel-head h3,
+.app-shell.theme-night .travel-event-time input,
+.app-shell.theme-night .travel-event-body input,
+.app-shell.theme-night .travel-event-body textarea,
+.app-shell.theme-night .timeline-card p,
+.app-shell.theme-night .daily-receipt pre,
+.app-shell.theme-night .offline-cosmos p,
+.app-shell.theme-night .install-guide-card p,
+.app-shell.theme-night .install-guide-card ol,
+.app-shell.theme-night .pwa-status-section p:not(.section-kicker) {
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .soft-button,
+.app-shell.theme-night .wide-soft-button,
+.app-shell.theme-night .task-button,
+.app-shell.theme-night .photo-upload {
+  background: linear-gradient(135deg, var(--night-cyan), var(--night-teal));
+  color: #0f1928;
+}
+
+.app-shell.theme-night .ghost-button,
+.app-shell.theme-night .data-actions .ghost-button,
+.app-shell.theme-night .secret-code-list button,
+.app-shell.theme-night .wish-list button {
+  background: rgba(143, 211, 224, 0.13);
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .import-button,
+.app-shell.theme-night .calendar-button,
+.app-shell.theme-night .wide-soft-button.completed,
+.app-shell.theme-night .task-button.completed,
+.app-shell.theme-night .travel-event.done .travel-check,
+.app-shell.theme-night .suitcase-item.packed span,
+.app-shell.theme-night .meeting-item.done span,
+.app-shell.theme-night .wish-list article.done button:first-child {
+  background: var(--night-teal);
+  color: #0f1928;
+}
+
+.app-shell.theme-night .travel-progress-ring {
+  background:
+    radial-gradient(circle at center, rgba(20, 28, 46, 0.96) 0 56%, transparent 57%),
+    conic-gradient(var(--night-cyan) var(--travel-progress), rgba(143, 211, 224, 0.14) 0);
+  box-shadow: 0 14px 30px rgba(8, 14, 28, 0.34), inset 0 0 0 1px rgba(143, 211, 224, 0.1);
+}
+
+.app-shell.theme-night .travel-progress-ring strong,
+.app-shell.theme-night .travel-progress-ring span {
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .travel-calendar-grid i,
+.app-shell.theme-night .travel-calendar-head small,
+.app-shell.theme-night .travel-day-panel-head > span {
+  background: rgba(143, 211, 224, 0.14);
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .bottom-nav {
+  border-color: rgba(188, 227, 222, 0.16);
+  background: rgba(20, 28, 46, 0.9);
+}
+
+.app-shell.theme-night .bottom-nav button {
+  color: var(--night-muted);
+}
+
+.app-shell.theme-night .bottom-nav button.active {
+  background: linear-gradient(135deg, var(--night-cyan), var(--night-teal));
+  color: #0f1928;
+}
+
+@media (max-width: 440px) {
+  .travel-day-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-event-time {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+    align-items: center;
+  }
+
+  .travel-event-time::after {
+    display: none;
+  }
+
+  .travel-calendar-grid em {
+    display: none;
+  }
+
+  .travel-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-actions .soft-button,
+  .travel-actions .ghost-button,
+  .travel-actions .wide-soft-button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 0;
+  }
+}
+
+.app-shell.theme-night .theme-discovery,
+.app-shell.theme-night .theme-guide {
+  border-color: rgba(143, 211, 224, 0.18);
+  background: rgba(20, 28, 46, 0.78);
+  color: var(--night-text);
+}
+
+.app-shell.theme-night .theme-guide p {
+  color: var(--night-muted);
+}

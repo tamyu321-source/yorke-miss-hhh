@@ -1,0 +1,461 @@
+.opening-sequence {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 0;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(143, 211, 224, 0.34), transparent 24%),
+    radial-gradient(circle at 76% 28%, rgba(228, 192, 106, 0.18), transparent 18%),
+    radial-gradient(circle at 22% 72%, rgba(125, 157, 232, 0.22), transparent 24%),
+    linear-gradient(180deg, #0d1525 0%, #17233a 58%, #101728 100%);
+  color: #f1f6f5;
+  cursor: pointer;
+  animation: opening-leave 6200ms ease forwards;
+}
+
+.opening-sequence.opening-returning {
+  animation-duration: 4400ms;
+}
+
+.opening-sequence.closing {
+  animation: opening-skip-out 620ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.opening-grid {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  background-image:
+    linear-gradient(rgba(143, 211, 224, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(143, 211, 224, 0.1) 1px, transparent 1px);
+  background-size: 30px 30px;
+  mask-image: radial-gradient(circle, rgba(0, 0, 0, 0.95), transparent 68%);
+  opacity: 0;
+  transform: scale(0.72) rotate(8deg);
+  animation: opening-grid 1800ms ease forwards;
+}
+
+.opening-scan {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(143, 211, 224, 0.16) 48%, rgba(143, 211, 224, 0.34) 50%, rgba(143, 211, 224, 0.16) 52%, transparent 100%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  opacity: 0;
+  transform: translateY(-70%);
+  animation: opening-scan 3200ms ease-in-out 600ms forwards;
+}
+
+.opening-flare {
+  position: absolute;
+  width: min(88vw, 430px);
+  height: min(88vw, 430px);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(143, 211, 224, 0.26), transparent 38%),
+    conic-gradient(from 90deg, transparent, rgba(143, 211, 224, 0.18), transparent, rgba(228, 192, 106, 0.16), transparent);
+  filter: blur(0.2px);
+  opacity: 0;
+  animation: opening-flare 4200ms ease 420ms forwards;
+}
+
+.opening-finale {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 48%, transparent 0 20%, rgba(143, 211, 224, 0.12) 21%, transparent 44%),
+    conic-gradient(from 90deg, transparent, rgba(143, 211, 224, 0.12), transparent, rgba(246, 200, 111, 0.1), transparent);
+  opacity: 0;
+  transform: scale(0.72) rotate(0deg);
+  animation: opening-finale 1800ms ease 4100ms forwards;
+}
+
+.opening-returning .opening-finale {
+  animation-delay: 2600ms;
+}
+
+.opening-star {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(241, 246, 245, 0.9);
+  box-shadow: 0 0 12px rgba(143, 211, 224, 0.64);
+  opacity: 0;
+  animation: opening-star 2100ms ease-in-out infinite;
+}
+
+.opening-orbit {
+  position: absolute;
+  width: min(74vw, 360px);
+  height: min(74vw, 360px);
+  border: 1px solid rgba(143, 211, 224, 0.26);
+  border-radius: 50%;
+  box-shadow: 0 0 28px rgba(143, 211, 224, 0.12);
+  transform: rotateX(66deg) rotateZ(0deg) scale(0.78);
+  animation: opening-orbit 2300ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.opening-orbit-two {
+  width: min(92vw, 460px);
+  height: min(92vw, 460px);
+  border-color: rgba(120, 200, 181, 0.22);
+  animation-delay: 140ms;
+}
+
+.opening-orbit-three {
+  width: min(56vw, 280px);
+  height: min(56vw, 280px);
+  border-color: rgba(228, 192, 106, 0.2);
+  animation-duration: 2600ms;
+  animation-delay: 260ms;
+  animation-direction: reverse;
+}
+
+.opening-plane {
+  position: absolute;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  color: #f1f6f5;
+  filter: drop-shadow(0 18px 22px rgba(2, 7, 18, 0.52));
+  transform: translate(-46vw, 18vh) rotate(-18deg) scale(0.7);
+  animation: opening-plane 3600ms cubic-bezier(0.16, 0.84, 0.22, 1) 580ms forwards;
+}
+
+.opening-plane::after {
+  position: absolute;
+  right: 48px;
+  width: 44vw;
+  max-width: 250px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(143, 211, 224, 0.72), rgba(228, 192, 106, 0.52));
+  content: "";
+  transform: rotate(7deg);
+}
+
+.opening-plane svg {
+  width: 100%;
+  height: 100%;
+}
+
+.opening-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 9px;
+  width: min(82vw, 360px);
+  text-align: center;
+  opacity: 0;
+  transform: translateY(18px) scale(0.96);
+  animation: opening-copy 2700ms ease 1200ms forwards;
+}
+
+.opening-copy span {
+  color: #9fb2c3;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.opening-copy strong {
+  color: #f1f6f5;
+  font-size: clamp(1.55rem, 8vw, 2.45rem);
+  line-height: 1.16;
+}
+
+.opening-copy em {
+  justify-self: center;
+  min-width: 142px;
+  padding: 8px 14px;
+  border: 1px solid rgba(143, 211, 224, 0.22);
+  border-radius: 999px;
+  background: rgba(143, 211, 224, 0.12);
+  color: #8fd3e0;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.opening-chapters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  width: min(78vw, 320px);
+  justify-self: center;
+}
+
+.opening-chapters i {
+  min-width: 0;
+  padding: 6px 5px;
+  overflow: hidden;
+  border: 1px solid rgba(143, 211, 224, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #c6d8dc;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(7px);
+  animation: opening-chapter 900ms ease forwards;
+}
+
+.opening-chapters i:nth-child(1) {
+  animation-delay: 1550ms;
+}
+
+.opening-chapters i:nth-child(2) {
+  animation-delay: 2050ms;
+}
+
+.opening-chapters i:nth-child(3) {
+  animation-delay: 2550ms;
+}
+
+.opening-chapters i:nth-child(4) {
+  animation-delay: 3050ms;
+}
+
+.opening-returning .opening-chapters i:nth-child(1) {
+  animation-delay: 980ms;
+}
+
+.opening-returning .opening-chapters i:nth-child(2) {
+  animation-delay: 1320ms;
+}
+
+.opening-returning .opening-chapters i:nth-child(3) {
+  animation-delay: 1660ms;
+}
+
+.opening-returning .opening-chapters i:nth-child(4) {
+  animation-delay: 2000ms;
+}
+
+.opening-status {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+  justify-self: center;
+  width: min(68vw, 260px);
+  margin-top: 2px;
+}
+
+.opening-status i {
+  display: block;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(143, 211, 224, 0.18);
+  overflow: hidden;
+}
+
+.opening-status i::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7d9de8, #8fd3e0, #78c8b5);
+  content: "";
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: opening-status 2200ms ease forwards;
+}
+
+.opening-status i:nth-child(2)::before {
+  animation-delay: 260ms;
+}
+
+.opening-status i:nth-child(3)::before {
+  animation-delay: 520ms;
+}
+
+.opening-status i:nth-child(4)::before {
+  animation-delay: 780ms;
+}
+
+.app-shell.theme-peach .opening-sequence {
+  background:
+    radial-gradient(circle at 48% 42%, rgba(255, 219, 202, 0.54), transparent 24%),
+    radial-gradient(circle at 72% 26%, rgba(246, 200, 111, 0.26), transparent 18%),
+    radial-gradient(circle at 22% 72%, rgba(247, 166, 161, 0.28), transparent 24%),
+    linear-gradient(180deg, #fff7f2 0%, #f9d8d7 58%, #f6f0e8 100%);
+  color: #4b3442;
+}
+
+.app-shell.theme-peach .opening-grid {
+  background-image:
+    radial-gradient(circle, rgba(247, 166, 161, 0.34) 2px, transparent 3px),
+    linear-gradient(rgba(246, 200, 111, 0.11) 1px, transparent 1px);
+  background-size: 34px 34px, 30px 30px;
+  animation-name: peach-petal-field;
+}
+
+.app-shell.theme-peach .opening-scan {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(247, 166, 161, 0.14) 48%, rgba(255, 247, 242, 0.52) 50%, rgba(247, 166, 161, 0.14) 52%, transparent 100%),
+    linear-gradient(90deg, transparent, rgba(246, 200, 111, 0.14), transparent);
+}
+
+.app-shell.theme-peach .opening-flare {
+  background:
+    radial-gradient(circle, rgba(255, 247, 242, 0.66), transparent 40%),
+    conic-gradient(from 20deg, transparent, rgba(247, 166, 161, 0.32), transparent, rgba(246, 200, 111, 0.28), transparent);
+}
+
+.app-shell.theme-peach .opening-finale {
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 247, 242, 0.32), transparent 30%),
+    conic-gradient(from 10deg, transparent, rgba(247, 166, 161, 0.24), transparent 18%, rgba(246, 200, 111, 0.2), transparent 42%);
+}
+
+.app-shell.theme-peach .opening-star {
+  border-radius: 60% 40% 62% 38%;
+  background: rgba(247, 166, 161, 0.88);
+  box-shadow: 0 0 14px rgba(246, 200, 111, 0.28);
+  animation-name: peach-petal-float;
+}
+
+.app-shell.theme-peach .opening-orbit {
+  border-color: rgba(247, 166, 161, 0.28);
+  box-shadow: 0 0 28px rgba(246, 200, 111, 0.18);
+}
+
+.app-shell.theme-peach .opening-orbit-two {
+  border-color: rgba(246, 200, 111, 0.24);
+}
+
+.app-shell.theme-peach .opening-orbit-three {
+  border-color: rgba(117, 183, 197, 0.2);
+}
+
+.app-shell.theme-peach .opening-plane {
+  color: #5a4050;
+  filter: drop-shadow(0 18px 20px rgba(126, 82, 92, 0.24));
+}
+
+.app-shell.theme-peach .opening-plane::after {
+  background: linear-gradient(90deg, transparent, rgba(247, 166, 161, 0.7), rgba(246, 200, 111, 0.48));
+}
+
+.app-shell.theme-peach .opening-copy span {
+  color: #7f6571;
+}
+
+.app-shell.theme-peach .opening-copy strong {
+  color: #4b3442;
+}
+
+.app-shell.theme-peach .opening-copy em {
+  border-color: rgba(247, 166, 161, 0.28);
+  background: rgba(255, 255, 255, 0.48);
+  color: #8d5060;
+}
+
+.app-shell.theme-peach .opening-chapters i {
+  border-color: rgba(247, 166, 161, 0.22);
+  background: rgba(255, 255, 255, 0.44);
+  color: #8d5060;
+}
+
+.app-shell.theme-peach .opening-status i {
+  background: rgba(247, 166, 161, 0.2);
+}
+
+.app-shell.theme-peach .opening-status i::before {
+  background: linear-gradient(90deg, #f6a6a1, #f6c86f, #75b7c5);
+}
+
+.app-shell.theme-mint .opening-sequence {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(134, 212, 189, 0.32), transparent 24%),
+    radial-gradient(circle at 76% 28%, rgba(117, 183, 197, 0.28), transparent 18%),
+    radial-gradient(circle at 22% 72%, rgba(234, 247, 247, 0.42), transparent 24%),
+    linear-gradient(180deg, #eaf7f7 0%, #dff4ef 52%, #eef8f5 100%);
+  color: #1f4d4a;
+}
+
+.app-shell.theme-mint .opening-grid {
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(134, 212, 189, 0.2), transparent 34%),
+    radial-gradient(circle, rgba(117, 183, 197, 0.22) 2px, transparent 3px);
+  background-size: 80px 80px, 28px 28px;
+  animation-name: mint-ripple-field;
+}
+
+.app-shell.theme-mint .opening-scan {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(134, 212, 189, 0.12) 48%, rgba(117, 183, 197, 0.34) 50%, rgba(134, 212, 189, 0.12) 52%, transparent 100%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+}
+
+.app-shell.theme-mint .opening-flare {
+  background:
+    radial-gradient(circle, rgba(234, 247, 247, 0.78), transparent 40%),
+    conic-gradient(from 140deg, transparent, rgba(134, 212, 189, 0.28), transparent, rgba(117, 183, 197, 0.26), transparent);
+}
+
+.app-shell.theme-mint .opening-finale {
+  background:
+    radial-gradient(circle at 50% 48%, transparent 0 18%, rgba(134, 212, 189, 0.18) 19%, transparent 42%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(117, 183, 197, 0.14) 0 2px, transparent 2px 22px);
+}
+
+.app-shell.theme-mint .opening-star {
+  background: rgba(117, 183, 197, 0.78);
+  box-shadow: 0 0 16px rgba(134, 212, 189, 0.36);
+  animation-name: mint-bubble-rise;
+}
+
+.app-shell.theme-mint .opening-orbit {
+  border-color: rgba(134, 212, 189, 0.28);
+  box-shadow: 0 0 30px rgba(117, 183, 197, 0.18);
+}
+
+.app-shell.theme-mint .opening-orbit-two {
+  border-color: rgba(117, 183, 197, 0.26);
+}
+
+.app-shell.theme-mint .opening-orbit-three {
+  border-color: rgba(246, 200, 111, 0.18);
+}
+
+.app-shell.theme-mint .opening-plane {
+  color: #1f4d4a;
+  filter: drop-shadow(0 18px 20px rgba(49, 103, 102, 0.24));
+}
+
+.app-shell.theme-mint .opening-plane::after {
+  background: linear-gradient(90deg, transparent, rgba(134, 212, 189, 0.72), rgba(117, 183, 197, 0.5));
+}
+
+.app-shell.theme-mint .opening-copy span {
+  color: #4d7674;
+}
+
+.app-shell.theme-mint .opening-copy strong {
+  color: #1f4d4a;
+}
+
+.app-shell.theme-mint .opening-copy em {
+  border-color: rgba(117, 183, 197, 0.28);
+  background: rgba(255, 255, 255, 0.52);
+  color: #2e766f;
+}
+
+.app-shell.theme-mint .opening-chapters i {
+  border-color: rgba(117, 183, 197, 0.24);
+  background: rgba(255, 255, 255, 0.46);
+  color: #2e766f;
+}
+
+.app-shell.theme-mint .opening-status i {
+  background: rgba(117, 183, 197, 0.18);
+}
+
+.app-shell.theme-mint .opening-status i::before {
+  background: linear-gradient(90deg, #86d4bd, #75b7c5, #f6c86f);
+}

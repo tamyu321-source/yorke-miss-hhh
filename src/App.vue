@@ -18,692 +18,68 @@ import { restoreAppLocalStorage, storageKey } from './storage';
 import type {
   ActiveTab,
   AppSettings,
+  BurstParticle,
+  CountdownUnit,
   Countdown,
-  DailyQuestion,
-  Fortune,
-  JourneyEntry,
-  JourneyDay,
-  JourneyPlanDay,
+  JourneyEditableEntryField,
+  JourneyImportRow,
+  JourneyPanelMode,
+  JourneyScheduleSection,
   JourneyTrip,
-  MeetingMoment,
   MemoryPhoto,
-  MoodOption,
   PlaneDragState,
-  RadarChoice,
   Sparkle,
   ThemeId,
-  TimelineEvent,
   WishItem
 } from './types';
 
-type CountdownUnit = keyof Countdown;
+import {
+  DAY_MS, OPENING_DURATION_MS, OPENING_RETURN_DURATION_MS, OPENING_SKIP_DURATION_MS,
+  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, THEME_CHROME_COLORS,
+  JOURNEY_AUTO_TIME_SLOTS, BOY_NAME,
+  GIRL_NAME, defaultSettings, themeOptions,
+  suitcaseItems,
+  moodOptions, secretWhispers, fortuneDeck, timelineEvents,
+  defaultSecretCodes, hiddenCardLines, dailyQuestions, radarChoices,
+  meetingChecklistItems, meetingMomentItems
+} from './data/appData';
+import {
+  addDays,
+  clamp,
+  createJourneyDays,
+  formatDateKey,
+  formatMonthDay,
+  getCheckinStreak,
+  getClosenessLabel,
+  getCountdown,
+  normalizeClockTime,
+  normalizeDateSetting,
+  parseClockTime,
+  parseDateSetting,
+  pick,
+  startOfDay
+} from './utils/dateJourney';
+import {
+  autoScheduleJourneyDay,
+  buildJourneyTripFromRows,
+  createDefaultJourneyTrip,
+  createJourneyDay,
+  createJourneyEntry,
+  createLocalId,
+  formatJourneyDateLabel,
+  getJourneyEntrySectionId,
+  getNearestJourneyTrip,
+  normalizeImportedDate,
+  normalizeJourneyTrip,
+  parseDateToDay,
+  parseJourneyEntryDateTime,
+  parseJourneyEntryEndDateTime,
+  parseJourneyRowsFromMatrix,
+  parseJourneyRowsFromText,
+  parseTimeSortValue,
+  renumberJourneyDays
+} from './journey/journeyPlanner';
 
-type BurstParticle = {
-  id: number;
-  x: number;
-  y: number;
-  delay: string;
-};
-
-type JourneyEditableEntryField = 'time' | 'city' | 'plan' | 'stay' | 'transport' | 'duration' | 'note';
-
-type JourneyImportRow = {
-  dayLabel: string;
-  date: string;
-  city: string;
-  plan: string;
-  stay: string;
-  transport: string;
-  duration: string;
-  note: string;
-};
-
-type JourneyPanelMode = 'schedule' | 'import';
-type JourneyScheduleSection = {
-  id: string;
-  label: string;
-  caption: string;
-  entries: JourneyEntry[];
-};
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-const OPENING_DURATION_MS = 6400;
-const OPENING_RETURN_DURATION_MS = 4600;
-const OPENING_SKIP_DURATION_MS = 620;
-const OPENING_REDUCED_DURATION_MS = 650;
-const SETTINGS_UPDATED_KIND = 'settings-updated-at';
-const THEME_CHROME_COLORS: Record<ThemeId, { color: string; background: string; statusBar: string }> = {
-  peach: { color: '#f9d8d7', background: '#fff7f2', statusBar: 'black-translucent' },
-  mint: { color: '#dff4ef', background: '#eaf7f7', statusBar: 'black-translucent' },
-  night: { color: '#111a2d', background: '#111a2d', statusBar: 'black-translucent' }
-};
-const JOURNEY_IMPORT_HEADERS = ['day', '日期', '城市', '行程安排', '住宿', '交通工具', '車程/時間', '備註'];
-const JOURNEY_AUTO_TIME_SLOTS = ['09:30', '11:00', '14:30', '16:30', '18:30', '20:00'];
-const JOURNEY_COLUMN_ALIASES: Record<keyof JourneyImportRow, string[]> = {
-  dayLabel: ['day', '天數', '天', 'day 1', '日期序'],
-  date: ['日期', 'date', '出發日', '時間'],
-  city: ['城市', 'city', '地點', '區域', '目的地'],
-  plan: ['行程安排', '行程', '安排', '景點', '活動', 'itinerary', 'plan'],
-  stay: ['住宿', '飯店', '酒店', 'hotel', 'stay'],
-  transport: ['交通工具', '交通', 'transport', '移動方式'],
-  duration: ['車程/時間', '車程', '時間', 'duration', '路程'],
-  note: ['備註', 'note', 'notes', '提醒', '補充']
-};
-const emptyJourneyDraftRow: JourneyImportRow = {
-  dayLabel: '',
-  date: '',
-  city: '',
-  plan: '',
-  stay: '',
-  transport: '',
-  duration: '',
-  note: ''
-};
-const BOY_NAME = '大笨蛋北七';
-const GIRL_NAME = '小笨蛋粽子';
-const defaultSettings: AppSettings = {
-  boyName: '大笨蛋北七',
-  girlName: '小笨蛋粽子',
-  theme: 'peach',
-  startDate: '2026-04-08',
-  startTime: '00:00',
-  targetDate: '2026-08-14',
-  targetTime: '18:00',
-  welcomeLine: '把倒數放慢一點，讓見面自己靠近。',
-  reducedMotion: false,
-  soundFeedback: true
-};
-
-const themeOptions: Array<{ id: ThemeId; label: string }> = [
-  { id: 'peach', label: '蜜桃光' },
-  { id: 'mint', label: '薄荷風' },
-  { id: 'night', label: '夜航燈' }
-];
-
-const relationshipPhases = [
-  {
-    untilDay: 1,
-    label: '相識',
-    noteOpenings: ['今天是你們相識的日子，故事從一個很輕的招呼開始'],
-    noteDetails: ['那時候還不知道，這一天會被好好記住'],
-    taskIdeas: ['把今天定成你們的相識紀念日'],
-    capsuleIdeas: ['4 月 8 日，相識的第一頁']
-  },
-  {
-    untilDay: 18,
-    label: '初識',
-    noteOpenings: [
-      '剛認識的日子，連一句普通訊息都像新的路標',
-      '還在慢慢認識彼此，語氣裡藏著一點點好奇',
-      '今天的距離不急著變短，先讓名字變得熟悉',
-      '故事還很安靜，但已經開始有了方向',
-      '你們正在學會分辨對方的節奏',
-      '有些靠近，是從願意多聊一句開始'
-    ],
-    noteDetails: [
-      '把這份剛開始的好奇收好，它會變成後來的溫柔',
-      '不用把答案想太快，只要讓每一次對話都真誠一點',
-      '陌生感正在退後，熟悉感正在悄悄靠前',
-      '如果今天有笑一下，那就是很好的進度',
-      '兩個人的世界還沒重疊很多，但已經有一點光',
-      '這段開始很輕，卻值得被認真記下來'
-    ],
-    taskIdeas: [
-      '記下一個今天對對方的新發現',
-      '把一段覺得舒服的聊天存成回憶',
-      '問一個輕鬆的小問題',
-      '分享一件今天發生的普通小事',
-      '聽一首適合剛認識時的歌',
-      '寫下你對這段相識的第一個印象'
-    ],
-    capsuleIdeas: [
-      '第一次記住對方名字的感覺',
-      '一則讓人想再回覆的訊息',
-      '剛認識時的小小好奇',
-      '開始期待下一次聊天的瞬間',
-      '從陌生變熟悉的第一步',
-      '相識初期的輕輕心動'
-    ]
-  },
-  {
-    untilDay: 45,
-    label: '熟悉',
-    noteOpenings: [
-      '慢慢熟起來以後，日常開始有了對方的位置',
-      '今天不是突然靠近，而是又多了一點理解',
-      '你們開始把普通的事，也說給彼此聽',
-      '熟悉感不是大聲宣布的，是每天多留下來一點',
-      '有些訊息看起來平凡，其實是在蓋一座小橋',
-      '大笨蛋北七和小笨蛋粽子，開始有了只有彼此懂的節奏',
-      '今天的聊天如果很自然，那就是很珍貴的靠近',
-      '你們正在從認識，走向更願意分享的地方'
-    ],
-    noteDetails: [
-      '這段時間不用催促，只要讓舒服的感覺慢慢長大',
-      '一點點熟悉，一點點在意，都是故事正在展開',
-      '能把無聊說給對方聽，其實也是一種信任',
-      '每天的問候都很小，累積起來卻很溫柔',
-      '不是每一天都要特別，但每一天都在加深',
-      '把今天的靠近記下來，未來會覺得很可愛',
-      '如果開始在意對方的心情，那就不是普通朋友那麼簡單了',
-      '這份自然感，會是後來很多甜的來源'
-    ],
-    taskIdeas: [
-      '分享今天最真實的一個心情',
-      '記下一句對方說過、你想留住的話',
-      '傳一張今天看見的天空或街景',
-      '問問對方今天累不累',
-      '整理一個你們共同喜歡的小主題',
-      '把一段讓你笑的聊天截圖收藏',
-      '留意對方喜歡的食物或飲料',
-      '寫下你覺得對方可愛的一個地方'
-    ],
-    capsuleIdeas: [
-      '第一次覺得聊天變自然',
-      '開始分享日常的一天',
-      '一個被記住的小習慣',
-      '一句剛好讓人安心的話',
-      '慢慢熟悉後的舒服感',
-      '普通日子裡的特別位置',
-      '一段聊到捨不得結束的晚上',
-      '從好奇變成在意的轉折'
-    ]
-  },
-  {
-    untilDay: 75,
-    label: '靠近',
-    noteOpenings: [
-      '有些心意沒有立刻說破，但已經在日常裡露出一點光',
-      '你們開始不只分享生活，也開始把對方放進計畫裡',
-      '今天的靠近，比昨天更像一個答案',
-      '曖昧最可愛的地方，是兩個人都在小心確認',
-      '大笨蛋北七想著小笨蛋粽子時，距離好像也沒那麼遠',
-      '有些關心一說出口，就不只是普通朋友了',
-      '慢慢靠近的日子裡，心意正在變得清楚',
-      '今天也許沒有告白，但已經有了很像喜歡的溫柔'
-    ],
-    noteDetails: [
-      '不用急著定義，能一起往前就已經很好',
-      '把心動放慢一點，才有時間看清楚它的樣子',
-      '你們不是突然變重要，是每天都多重要一點',
-      '那些想多聊一下的念頭，都在替答案鋪路',
-      '如果開始期待對方的出現，那就是心裡有位置了',
-      '這段不急不躁的靠近，很適合被溫柔收藏',
-      '喜歡有時候不是一句話，是很多次沒有離開',
-      '今天的在意，也許就是後來的確定'
-    ],
-    taskIdeas: [
-      '寫下一個你最近開始在意對方的瞬間',
-      '準備一個不刻意但很溫柔的關心',
-      '問問對方最近最期待什麼',
-      '記下一件想和對方一起完成的小事',
-      '挑一首像現在心情的歌',
-      '把想說但還沒說的話寫在備忘錄',
-      '分享一個自己的小弱點',
-      '想一想你們如果見面，第一站想去哪裡'
-    ],
-    capsuleIdeas: [
-      '心意開始變明顯的一天',
-      '一句不像普通朋友的關心',
-      '想把對方放進計畫裡的瞬間',
-      '還沒說破但已經靠近的時期',
-      '一點點心動，一點點確認',
-      '開始想像見面的畫面',
-      '讓人捨不得已讀不回的訊息',
-      '兩個人都在慢慢靠近的證據'
-    ]
-  },
-  {
-    untilDay: 98,
-    label: '確認心意',
-    noteOpenings: [
-      '慢慢走到這裡，喜歡不再只是猜測',
-      '你們終於把心意看得更清楚了一點',
-      '從相識到現在，答案不是突然出現，是一起長出來的',
-      '今天適合承認：對方已經不是普通的存在',
-      '大笨蛋北七和小笨蛋粽子，正在把彼此放進更重要的位置',
-      '決定靠近以後，等待也有了新的名字',
-      '你們不是急著開始，而是慢慢確定這份喜歡',
-      '這段關係終於從也許，走向了更肯定的我們'
-    ],
-    noteDetails: [
-      '交往不是衝動，是那些日常累積出的安心',
-      '能慢慢決定，反而顯得這份心意更珍貴',
-      '願你們把喜歡說得真誠，也把彼此照顧得安穩',
-      '從今天開始，想念有了更清楚的方向',
-      '確認心意以後，很多小事都變得更甜',
-      '這不是一場突然的浪漫，是兩個人認真走來的結果',
-      '把這份確定收好，它會陪你們走到見面那天',
-      '故事沒有變得誇張，只是更真了'
-    ],
-    taskIdeas: [
-      '寫下你想好好珍惜對方的一個原因',
-      '替你們的關係留一句溫柔註解',
-      '說一句明確但不浮誇的喜歡',
-      '記下今天最想感謝對方的地方',
-      '整理一個見面時想完成的小願望',
-      '把 8 月 14 日加入重要提醒',
-      '確認彼此都舒服的相處方式',
-      '給對方一個安穩的晚安'
-    ],
-    capsuleIdeas: [
-      '慢慢決定要交往的心情',
-      '從相識走到喜歡的證明',
-      '把彼此放進更重要的位置',
-      '第一次清楚說出在意',
-      '關係變得更確定的一天',
-      '不是衝動，是累積出來的喜歡',
-      '開始以我們想事情的瞬間',
-      '交往前後那份安穩的甜'
-    ]
-  },
-  {
-    untilDay: 118,
-    label: '見面倒數',
-    noteOpenings: [
-      '心意確定以後，小飛機的目的地也更亮了',
-      '現在的倒數，不只是日期靠近，也是你們靠近',
-      '台南到上海的航線，正在替第一次見面鋪路',
-      '今天的等待有了更甜的重量',
-      '小笨蛋粽子離大笨蛋北七的城市又近了一點',
-      '見面這件事，開始從想像變成計畫',
-      '你們把喜歡帶進倒數裡，日子也變得更有光',
-      '每一天少一點距離，就多一點真實'
-    ],
-    noteDetails: [
-      '把行程慢慢整理好，也把心情慢慢照顧好',
-      '不用把見面想得完美，只要真實就會很珍貴',
-      '第一次見面的前奏，適合溫柔也適合期待',
-      '想像裡的擁抱，正在往現實靠近',
-      '這段等待會在見面那天變成很亮的回憶',
-      '緊張可以有，因為它也是在乎的一部分',
-      '把想說的話留一點給當天，讓眼睛先替你們說',
-      '願這趟靠近順利，願那天剛剛好'
-    ],
-    taskIdeas: [
-      '確認一次見面當天的時間安排',
-      '準備一套舒服又好看的穿搭',
-      '挑一家見面後想一起吃的店',
-      '檢查交通、住宿或證件資訊',
-      '寫下見面第一件想做的事',
-      '整理想帶的小物或小驚喜',
-      '把想拍的照片構圖記下來',
-      '留一點空白時間給自然發生的事'
-    ],
-    capsuleIdeas: [
-      '小飛機開始認真靠近終點',
-      '第一次見面的行程雛形',
-      '想一起吃飯的清單',
-      '見面當天想穿的樣子',
-      '行李裡留給期待的位置',
-      '快要見面前的緊張和甜',
-      '上海終點越來越清楚',
-      '想把線上日常帶到現實的一天'
-    ]
-  },
-  {
-    untilDay: 129,
-    label: '抵達前夕',
-    noteOpenings: [
-      '最後幾天，等待開始變得很像心跳',
-      '小飛機快到了，故事也快要從螢幕走出來',
-      '今天離見面很近，近到連緊張都變得可愛',
-      '倒數進入最後一段，請把笑容提前準備好',
-      '小笨蛋粽子快要真的見到大笨蛋北七了',
-      '這段從 4 月 8 日開始的故事，快要翻到新的一頁',
-      '現在每一分鐘都像在替見面暖身',
-      '快到了，別忘了把自己照顧好'
-    ],
-    noteDetails: [
-      '把路線、心情和想說的話都放好，剩下的交給那天',
-      '不用演得很完美，真實的你們就已經很好',
-      '見面之前的期待，會在第一眼變成答案',
-      '願抵達順利，願開口時剛好是最自然的語氣',
-      '等了這麼久，終於要把想念變成看得見的人',
-      '把最後的倒數過慢一點，因為它也很值得記住',
-      '明明快到了，卻更想把每個小時都珍惜起來',
-      '故事沒有結束，它只是要正式開始'
-    ],
-    taskIdeas: [
-      '最後確認路線和時間',
-      '把證件、充電器和錢包放在同一處',
-      '早點休息，讓明天的自己精神很好',
-      '準備一段見面時想說的真心話',
-      '檢查天氣和備用方案',
-      '把行李放在看得見的地方',
-      '給對方一句安心的晚安',
-      '帶著笑容出發'
-    ],
-    capsuleIdeas: [
-      '最後倒數的心跳聲',
-      '出發前夜的安靜',
-      '終點城市亮起的燈',
-      '快要真實見面的前一頁',
-      '把等待收進背包',
-      '第一眼之前的深呼吸',
-      '明天就能說你好',
-      '故事正式開始前的最後一格'
-    ]
-  }
-];
-
-const abstractNoteOpenings = [
-  '風把一小段距離摺進今天',
-  '雲慢慢往同一個方向移動',
-  '有些名字，會在日子裡變得柔軟',
-  '時間沒有大聲說話，卻悄悄留下光',
-  '今天像一張乾淨的紙，適合收藏一點想念',
-  '心裡的小小航線，又亮了一點',
-  '世界很大，但有些方向會越來越清楚',
-  '一段故事正在慢慢學會自己的形狀',
-  '海風把沒有說出口的話，輕輕推遠',
-  '等待不是空白，是一種很安靜的靠近',
-  '日子像慢慢展開的信紙',
-  '有些溫柔不用命名，也會被記住'
-];
-
-const abstractNoteDetails = [
-  '不用知道今天發生了什麼，只要知道它也在把你們往前帶。',
-  '那些沒有被寫下來的片刻，也會在心裡慢慢發芽。',
-  '靠近有時候很輕，輕到只像一次想起。',
-  '如果故事有聲音，今天大概是很小聲的一頁。',
-  '願這一天被溫柔經過，也被未來偷偷收藏。',
-  '距離還在，但方向已經不是空的。',
-  '有些等待不是為了抵達，而是為了把心意養得更真。',
-  '今天不必具體，也可以很值得。',
-  '所有尚未確定的事，都可以先交給時間。',
-  '慢慢來，月光也不是一下子就照滿整條路。'
-];
-
-const abstractTaskIdeas = [
-  '替今天留一句不必解釋的話',
-  '挑一首適合此刻心情的歌',
-  '拍下一個讓你覺得安靜的畫面',
-  '把一點點期待放進備忘錄',
-  '給自己一段不被打擾的時間',
-  '記下一個今天想保留的顏色',
-  '把心情整理成很短的一行字',
-  '聽一段風聲、雨聲，或城市的聲音',
-  '寫下一件讓你願意微笑的小事',
-  '讓今天比昨天更柔軟一點'
-];
-
-const abstractCapsuleIdeas = [
-  '一頁還沒寫完的春天',
-  '藏在風裡的小小記號',
-  '一顆還沒說出口的星星',
-  '慢慢靠近的證明',
-  '某個安靜發亮的瞬間',
-  '名字開始變溫柔的地方',
-  '海面上很輕的一道光',
-  '一封沒有寄出的信',
-  '等待裡的一點甜',
-  '路途中的一枚小月亮',
-  '時間替你們留下的摺痕',
-  '故事還在呼吸的一頁'
-];
-
-const noteTextures = [
-  '晨光把邊界擦得很淡',
-  '雲影從心上慢慢經過',
-  '風停在還沒說出口的地方',
-  '海面替遠方留了一點亮',
-  '城市把聲音收得很輕',
-  '月色像一封沒有寄出的信',
-  '時間把溫柔摺成小小一角',
-  '午後的光落在安靜的頁邊',
-  '雨意把思念洗得更透明',
-  '星星在很遠的地方練習發光',
-  '路燈把夜晚照得剛剛好',
-  '日子在掌心留下柔軟的紋路',
-  '春天把名字寫得很輕',
-  '夏天慢慢靠近玻璃窗',
-  '空氣裡有一點不明說的甜',
-  '遠方像被一層光輕輕罩住',
-  '心裡的小航線安靜延伸',
-  '一頁日曆翻過去時很輕',
-  '光從縫隙裡慢慢長出來',
-  '想念沒有吵鬧，只是待在原地',
-  '沉默也像一種很慢的靠近',
-  '夜色把話語收進口袋',
-  '風把今天吹成很柔的形狀',
-  '雲朵替距離留下一點餘白',
-  '窗邊的光像一次輕輕點頭',
-  '世界暫時安靜到可以聽見心意',
-  '小小的期待在角落醒來',
-  '遠方不是空的，而是正在等',
-  '一點微光落進普通的一天',
-  '時間像細線，把兩端慢慢牽起',
-  '心事在夜裡變得比較誠實',
-  '海風帶走一點不確定',
-  '某個方向正在變得清楚',
-  '溫柔像慢慢化開的糖',
-  '今天的空白也有自己的重量',
-  '想念繞過城市，停在名字旁邊',
-  '一小段距離被光照得很軟'
-];
-
-const noteWhispers = [
-  '不必急著命名，也會被時間記住',
-  '不用具體，也能在心裡留下位置',
-  '尚未抵達的事，正在路上慢慢成形',
-  '有些靠近很安靜，卻從來沒有停下',
-  '願今天被輕輕收藏，等以後再回頭看',
-  '心意可以很小聲，但方向會很明亮',
-  '每一個普通日子，都在替故事鋪一層光',
-  '等風再近一些，答案也會更清楚一些',
-  '把未完成留給明天，也是一種溫柔',
-  '距離還在，可是等待已經有了形狀',
-  '不說太滿，反而更像真心',
-  '這一頁慢慢翻過，就離下一頁更近',
-  '日子沒有劇情，也可以很值得',
-  '那些沒有被寫下的片刻，也會發芽',
-  '讓心意在安靜裡長大一點',
-  '今天只需要好好經過，就已經很好',
-  '如果有光，它大概正落在同一個方向',
-  '故事不催促，只是一天一天變深',
-  '尚未說出的話，先交給風保管',
-  '靠近不是聲響，是慢慢亮起的路',
-  '願所有不確定，都被時間照得柔和',
-  '有些等待，本身就是一種回答',
-  '今天的溫柔不用證明，它自己存在',
-  '把心放慢，才聽得見細小的甜',
-  '未來還沒來，但已經有了輪廓',
-  '一切都可以慢慢，除了想見面的方向',
-  '這份安靜會被保存到很久以後',
-  '在還沒見面以前，先讓期待好好呼吸',
-  '願每一段空白，都不是空白',
-  '小小的一天，也能藏下一整片星光',
-  '沒有大事發生，也能更靠近一點'
-];
-
-const taskMotions = [
-  '替今天留下一個溫柔的標點',
-  '把心情寫成一句很短的風景',
-  '收集一種讓人安靜下來的顏色',
-  '選一首適合放慢腳步的歌',
-  '拍下一個不需要解釋的畫面',
-  '把一點期待放進備忘錄',
-  '讓自己比昨天更早休息一點',
-  '寫下一句想交給未來的話',
-  '整理一個小小的心情角落',
-  '為今天保留三分鐘的空白',
-  '記住一個讓你覺得柔軟的瞬間',
-  '把不安折小，放到明天再看',
-  '聽一段城市裡很輕的聲音',
-  '把想念寫得含蓄一點',
-  '讓今天有一個乾淨的收尾',
-  '找一個適合微笑的理由',
-  '把手機裡的一張照片留給以後',
-  '給遠方一個很小聲的祝福',
-  '把今天的光記成一個詞',
-  '替心裡的航線畫一個小點'
-];
-
-const taskObjects = [
-  '一枚月亮',
-  '一陣風',
-  '一片雲',
-  '一盞路燈',
-  '一段旋律',
-  '一頁日曆',
-  '一個名字',
-  '一點星光',
-  '一封沒寄出的信',
-  '一條海岸線',
-  '一杯溫熱的水',
-  '一個安靜的午後',
-  '一小段路',
-  '一張乾淨的紙',
-  '一顆慢慢靠近的心',
-  '一個還沒抵達的答案',
-  '一行很輕的字',
-  '一個剛好的晚安',
-  '一場尚未落下的雨',
-  '一個被保存的瞬間',
-  '一點不張揚的甜',
-  '一朵停在遠方的雲',
-  '一個藏好的微笑'
-];
-
-const capsuleAdjectives = [
-  '柔軟',
-  '安靜',
-  '微亮',
-  '透明',
-  '輕盈',
-  '含蓄',
-  '溫熱',
-  '遙遠',
-  '清澈',
-  '緩慢',
-  '細小',
-  '明亮',
-  '乾淨',
-  '靜謐',
-  '真實',
-  '未完成',
-  '剛剛好',
-  '不張揚',
-  '被珍藏'
-];
-
-const capsuleNouns = [
-  '春天摺痕',
-  '雲邊註記',
-  '海風頁碼',
-  '星光標本',
-  '月色便條',
-  '航線小點',
-  '心事書籤',
-  '日曆微光',
-  '遠方回音',
-  '信紙角落',
-  '城市餘溫',
-  '名字影子',
-  '等待碎片',
-  '玻璃窗光',
-  '午後停格',
-  '雨聲小節',
-  '路燈倒影',
-  '沉默花瓣',
-  '靠近證明',
-  '未寄信封',
-  '夏日序章',
-  '時間細線',
-  '故事側臉'
-];
-
-const specialJourneyDays: Record<string, Omit<JourneyDay, 'dateLabel'>> = {
-  '2026-04-19': {
-    note: `第 12 天｜警覺。小笨蛋粽子把心門留了一條縫，也把雷達開得很亮；大笨蛋北七在遠方努力看起來不像詐騙。`,
-    task: '4 月 19 日 小任務：把可疑和可愛都先放進同一個抽屜，明天再看一次。',
-    capsule: '4 月 19 日｜警覺：差點被歸類成詐騙的一頁。'
-  },
-  '2026-04-20': {
-    note: `第 13 天｜觀察。懷疑還沒有完全退潮，但故事沒有被關掉；有些真心，剛開始也需要通過兩天的防詐測試。`,
-    task: '4 月 20 日 小任務：給直覺一點時間，也給溫柔一點空間。',
-    capsule: '4 月 20 日｜觀察：防詐雷達持續運轉的第二天。'
-  }
-};
-
-const suitcaseItems = ['笑容', '證件', '充電器', '耳機', '勇氣', '想說的話', '一點點可愛', '見面時的慢慢來'];
-
-const moodOptions: MoodOption[] = [
-  { id: 'sunny', icon: '晴', label: '晴', line: '今天心裡有一點乾淨的光。' },
-  { id: 'cloudy', icon: '雲', label: '微雲', line: '雲在，心也可以慢慢走。' },
-  { id: 'rainy', icon: '雨', label: '小雨', line: '雨聲把想念洗得更清楚。' },
-  { id: 'starry', icon: '星', label: '星夜', line: '夜裡有星，遠方就不算太遠。' }
-];
-
-const secretWhispers = [
-  '有些喜歡還沒說出口，就已經先在心裡坐好了。',
-  '如果今天有一點想念，那就讓它悄悄發光。',
-  '遠方不是距離，是小笨蛋粽子正在飛去的方向。',
-  '大笨蛋北七也許很北七，但故事偏偏把他留了下來。',
-  '等見面那天，所有慢慢來都會變成剛剛好。',
-  '喜歡不一定要很大聲，安靜一點也很真。',
-  '這一段等待，是兩個笨蛋一起寫的小詩。',
-  '如果心跳有航班，它今天也準時起飛了。'
-];
-
-const fortuneDeck: Fortune[] = [
-  { title: '今日宜慢慢靠近', line: '把話說輕一點，心意會自己留下來。' },
-  { title: '今日宜保存微光', line: '不需要很盛大，一點點亮就夠了。' },
-  { title: '今日宜相信直覺', line: '直覺不必催促，只要陪你看清楚。' },
-  { title: '今日宜好好吃飯', line: '照顧自己，也是把見面那天照顧好。' },
-  { title: '今日宜收起不安', line: '把不安折小，放進明天會變輕。' },
-  { title: '今日宜想一件甜事', line: '甜不用很多，剛好能讓嘴角上揚就行。' },
-  { title: '今日宜把路走慢', line: '慢慢走，才看得見沿途的光。' },
-  { title: '今日宜留白', line: '有些空白，是為了讓故事呼吸。' },
-  { title: '今日宜聽風', line: '風會把沒有說出口的話帶遠一點。' },
-  { title: '今日宜晚安早一點', line: '夢裡也可以讓小飛機補一點油。' }
-];
-
-const timelineEvents: TimelineEvent[] = [
-  { date: '4/8', title: '相識', text: '故事從一個輕輕的招呼開始。', dayIndex: 0 },
-  { date: '4/19', title: '防詐觀察', text: '小笨蛋粽子的雷達開始發光。', dayIndex: 11 },
-  { date: '4/20', title: '繼續觀察', text: '大笨蛋北七暫時通過第二天測試。', dayIndex: 12 },
-  { date: '5 月', title: '熟悉發芽', text: '名字慢慢變成日常裡柔軟的位置。', dayIndex: 30 },
-  { date: '6 月', title: '慢慢靠近', text: '心意還不急著說滿，但方向清楚了。', dayIndex: 62 },
-  { date: '7 月', title: '確認心意', text: '喜歡不是突然，是一點一點走來。', dayIndex: 91 },
-  { date: '8/14', title: '第一次見面', text: '等待結束，故事正式開始。', dayIndex: 128 }
-];
-
-const defaultSecretCodes = ['北七粽子', '粽子北七', '大笨蛋小笨蛋', '小笨蛋大笨蛋'];
-
-const hiddenCardLines = [
-  '暗號正確。這裡藏著一張只給兩個笨蛋看的小卡：願每一次靠近，都有剛剛好的勇氣。',
-  '如果世界很吵，就把這張卡當成你們的小房間。門外是日子，門內是溫柔。',
-  '從 4 月 8 日開始，有些光就不再只是普通的光了。'
-];
-
-const dailyQuestions: DailyQuestion[] = [
-  { prompt: '今天想把哪一種風寄給對方？', hint: '可以是海風、晚風，也可以是不知道名字的風。' },
-  { prompt: '今天心裡最像哪一種天氣？', hint: '不一定要晴天，微雲也很適合想念。' },
-  { prompt: '如果今天是一封信，信封會是什麼顏色？', hint: '選一個不用解釋也喜歡的顏色。' },
-  { prompt: '今天想替未來保留哪一個小瞬間？', hint: '越普通越好，普通才會長久。' },
-  { prompt: '如果小飛機能帶一句話，它會帶什麼？', hint: '一句很短、很輕、很真的話。' },
-  { prompt: '今天哪一個字最接近你的心情？', hint: '光、風、慢、近、等，都可以。' },
-  { prompt: '想像見面的第一分鐘，背景會有什麼聲音？', hint: '腳步聲、風聲、心跳聲，都算。' },
-  { prompt: '今天想把哪一點勇氣放進行李箱？', hint: '小小一點就好，會累積的。' }
-];
-
-const radarChoices: RadarChoice[] = [
-  { id: 'smooth', label: '太會說話', result: '雷達震動：有點可疑，但語氣還算真誠，先扣 12 分再觀察。' },
-  { id: 'mystery', label: '太神祕', result: '雷達亮燈：神祕值偏高，建議小笨蛋粽子保持聰明。' },
-  { id: 'soft', label: '有點可愛', result: '雷達遲疑：可愛會干擾判斷，但暫時沒有封鎖必要。' }
-];
-
-const meetingChecklistItems = ['出門', '登機', '抵達上海', '看到大笨蛋北七', '說出第一句話'];
-
-const meetingMomentItems: MeetingMoment[] = [
-  { id: 'breathe', label: '先把路上的緊張慢慢放下' },
-  { id: 'first-look', label: '把第一眼好好記住' },
-  { id: 'walk', label: '留一段不用安排的散步' },
-  { id: 'photo', label: '把今天的一張照片收進回憶' },
-  { id: 'quiet', label: '留一句只有彼此聽見的話' }
-];
 
 const now = ref(new Date());
 const taskCompleted = ref(false);
@@ -1088,13 +464,18 @@ const navIndicatorStyle = computed(() => ({
 }));
 
 const visibleCapsules = computed(() =>
-  journeyDays.value.map((day, index) => ({
-    text: day.capsule,
-    dateLabel: day.dateLabel,
-    index,
-    unlocked: index < unlockedCount.value,
-    flipped: flippedCapsules.value.includes(index)
-  }))
+  journeyDays.value.map((day, index) => {
+    const unlockDate = addDays(configuredStartDay.value, index);
+    const daysToUnlock = Math.max(Math.ceil((unlockDate.getTime() - todayStart.value.getTime()) / DAY_MS), 1);
+    return {
+      text: day.capsule,
+      lockedText: `${day.dateLabel} 的膠囊還沒到時間，還有 ${daysToUnlock} 天會自己打開。`,
+      dateLabel: day.dateLabel,
+      index,
+      unlocked: index < unlockedCount.value,
+      flipped: flippedCapsules.value.includes(index)
+    };
+  })
 );
 const visibleCapsulesDisplay = computed(() => {
   if (capsuleShowAll.value) return visibleCapsules.value;
@@ -1718,9 +1099,7 @@ function loadMoodHistory() {
   }
 }
 
-function toggleCapsule(index: number, unlocked: boolean) {
-  if (!unlocked) return;
-
+function toggleCapsule(index: number) {
   const flipped = new Set(flippedCapsules.value);
   if (flipped.has(index)) {
     flipped.delete(index);
@@ -2285,7 +1664,7 @@ function loadJourneyTrips() {
   try {
     const parsed = JSON.parse(stored);
     if (!Array.isArray(parsed)) throw new Error('Journey trips must be an array.');
-    const trips = parsed.map(normalizeJourneyTrip).filter((trip): trip is JourneyTrip => Boolean(trip));
+    const trips = parsed.map((trip) => normalizeJourneyTrip(trip, todayStart.value)).filter((trip): trip is JourneyTrip => Boolean(trip));
     journeyTrips.value = trips.length ? trips : [createDefaultJourneyTrip()];
   } catch {
     journeyTrips.value = [createDefaultJourneyTrip()];
@@ -2486,7 +1865,7 @@ function updateJourneyTrip(tripId: string, patch: Partial<JourneyTrip>) {
       ...trip,
       ...patch,
       updatedAt: new Date().toISOString()
-    });
+    }, todayStart.value);
     return next ?? trip;
   });
   saveJourneyTrips();
@@ -2559,143 +1938,14 @@ async function parseJourneyRowsFromSpreadsheetFile(file: File) {
   return parseJourneyRowsFromMatrix(matrix);
 }
 
-function parseJourneyRowsFromText(text: string) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) throw new Error('沒有找到可匯入的表格內容。');
-
-  const matrix = lines.map((line) => {
-    if (line.includes('\t')) return line.split('\t');
-    if (line.includes(',')) return parseCsvLine(line);
-    const wideSplit = line.split(/\s{2,}/).filter(Boolean);
-    if (wideSplit.length >= 4) return wideSplit;
-    return parseLooseJourneyLine(line);
-  });
-  return parseJourneyRowsFromMatrix(matrix);
-}
-
-function parseJourneyRowsFromMatrix(matrix: Array<Array<string | number | boolean | Date | null>>) {
-  const cleaned = matrix
-    .map((row) => row.map((cell) => normalizeImportCell(cell)))
-    .filter((row) => row.some(Boolean));
-  if (!cleaned.length) throw new Error('沒有找到可匯入的表格內容。');
-
-  const headerIndex = cleaned.findIndex((row) => row.some((cell) => /day|日期|城市|行程|住宿|交通|備註/i.test(cell)));
-  const hasHeader = headerIndex >= 0;
-  const headers = hasHeader ? cleaned[headerIndex] : JOURNEY_IMPORT_HEADERS;
-  const rows = (hasHeader ? cleaned.slice(headerIndex + 1) : cleaned).map((row, index) => mapJourneyImportRow(headers, row, index));
-  const validRows = rows.filter((row) => row.date || row.city || row.plan || row.stay || row.transport || row.note);
-  if (!validRows.length) throw new Error('沒有解析到行程列，請確認表格至少包含日期、城市或行程。');
-  return validRows;
-}
-
-function mapJourneyImportRow(headers: string[], row: string[], index: number): JourneyImportRow {
-  const mapped: JourneyImportRow = { ...emptyJourneyDraftRow };
-  const hasUsefulHeader = headers.some((header) => findJourneyFieldByHeader(header));
-
-  if (hasUsefulHeader) {
-    headers.forEach((header, columnIndex) => {
-      const field = findJourneyFieldByHeader(header);
-      if (field) mapped[field] = row[columnIndex] ?? '';
-    });
-  } else {
-    mapped.dayLabel = row[0] ?? `Day ${index + 1}`;
-    mapped.date = row[1] ?? '';
-    mapped.city = row[2] ?? '';
-    mapped.plan = row[3] ?? '';
-    mapped.stay = row[4] ?? '';
-    mapped.transport = row[5] ?? '';
-    mapped.duration = row[6] ?? '';
-    mapped.note = row.slice(7).filter(Boolean).join(' ');
-  }
-
-  if (!mapped.dayLabel) mapped.dayLabel = `Day ${index + 1}`;
-  return mapped;
-}
-
-function findJourneyFieldByHeader(header: string) {
-  const normalized = header.trim().toLowerCase();
-  return (Object.keys(JOURNEY_COLUMN_ALIASES) as Array<keyof JourneyImportRow>).find((field) =>
-    JOURNEY_COLUMN_ALIASES[field].some((alias) => normalized === alias.toLowerCase() || normalized.includes(alias.toLowerCase()))
-  );
-}
-
-function parseLooseJourneyLine(line: string) {
-  const match = /^(day\s*\d+|第?\s*\d+\s*天)?\s*(\d{1,4}[/-]\d{1,2}(?:[/-]\d{1,4})?)?\s*(.*)$/i.exec(line);
-  if (!match) return [line];
-  const rest = match[3]?.trim() ?? '';
-  return [match[1] ?? '', match[2] ?? '', '', rest];
-}
-
-function parseCsvLine(line: string) {
-  const cells: string[] = [];
-  let current = '';
-  let quoted = false;
-  for (const char of line) {
-    if (char === '"') {
-      quoted = !quoted;
-    } else if (char === ',' && !quoted) {
-      cells.push(current.trim());
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-  cells.push(current.trim());
-  return cells;
-}
-
 function importJourneyRows(rows: JourneyImportRow[], sourceName: string) {
-  const trip = buildJourneyTripFromRows(rows, sourceName);
+  const trip = buildJourneyTripFromRows(rows, sourceName, todayStart.value);
   journeyTrips.value = [trip, ...journeyTrips.value];
   activeJourneyTripId.value = trip.id;
   activeJourneyDayId.value = trip.days[0]?.id ?? '';
   journeyImportMessage.value = `已建立「${trip.title}」，共 ${trip.days.length} 天。`;
   activeTab.value = 'journey';
   saveJourneyTrips();
-}
-
-function buildJourneyTripFromRows(rows: JourneyImportRow[], sourceName: string): JourneyTrip {
-  const days: JourneyPlanDay[] = [];
-  let lastDate: Date | null = null;
-
-  rows.forEach((row) => {
-    const fallbackDate = lastDate ? addDays(lastDate, 1) : todayStart.value;
-    const normalizedDate = normalizeImportedDate(row.date, fallbackDate) || formatDateKey(fallbackDate);
-    lastDate = parseDateToDay(normalizedDate);
-    const dayLabel = row.dayLabel || `Day ${days.length + 1}`;
-    const existingDay = days.find((day) => day.dayLabel === dayLabel || day.date === normalizedDate);
-    const targetDay =
-      existingDay ??
-      createJourneyDay(days.length + 1, normalizedDate, {
-        dayLabel,
-        city: row.city,
-        stay: row.stay
-      });
-
-    if (!existingDay) days.push(targetDay);
-    if (row.city && !targetDay.city) targetDay.city = row.city;
-    if (row.stay && !targetDay.stay) targetDay.stay = row.stay;
-    targetDay.entries.push(...createJourneyEntriesFromRow(row, targetDay.entries.length));
-  });
-
-  const sortedDays = renumberJourneyDays(days.sort((left, right) => parseDateToDay(left.date).getTime() - parseDateToDay(right.date).getTime()));
-  const startDate = sortedDays[0]?.date ?? formatDateKey(todayStart.value);
-  const endDate = sortedDays[sortedDays.length - 1]?.date ?? startDate;
-  const title = createJourneyTitleFromDays(sortedDays, sourceName);
-
-  return {
-    id: createLocalId('trip'),
-    title,
-    startDate,
-    endDate,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    sourceName,
-    days: sortedDays
-  };
 }
 
 function exportActiveJourneyCalendar() {
@@ -2706,6 +1956,7 @@ function exportActiveJourneyCalendar() {
       .filter((entry) => entry.plan || entry.transport || entry.note)
       .map((entry, index) => {
         const start = parseJourneyEntryDateTime(day.date, entry.time, index);
+        const end = parseJourneyEntryEndDateTime(day.date, entry.endTime, start);
         return {
           title: entry.plan || entry.transport || `${trip.title} ${day.dayLabel}`,
           description: [
@@ -2718,7 +1969,7 @@ function exportActiveJourneyCalendar() {
             .filter(Boolean)
             .join('\n'),
           start,
-          end: new Date(start.getTime() + 90 * 60 * 1000)
+          end
         };
       })
   );
@@ -2728,272 +1979,6 @@ function exportActiveJourneyCalendar() {
   }
   downloadCalendar(events, `${trip.title}-journey.ics`);
   journeyImportMessage.value = '已匯出旅程行事曆。';
-}
-
-function createDefaultJourneyTrip(): JourneyTrip {
-  return buildJourneyTripFromRows(
-    [
-      { dayLabel: 'Day 1', date: '2026-11-19', city: '布拉格', plan: '抵達、天文鐘、舊城廣場、查理大橋夜景', stay: '布拉格', transport: '飛機 + 市區交通', duration: '', note: '11/18 18:15 - 06:25、11/19 00:05 - 08:15' },
-      { dayLabel: 'Day 2', date: '2026-11-20', city: '布拉格 -> 克拉科夫', plan: '中央廣場、聖母聖殿、老城區', stay: '克拉科夫', transport: 'RegioJet', duration: '約 6.5 - 7hr', note: '早班車' },
-      { dayLabel: 'Day 3', date: '2026-11-21', city: '克拉科夫', plan: '奧斯威辛集中營', stay: '克拉科夫', transport: '巴士', duration: '約 1.5hr', note: '需要預約時段' },
-      { dayLabel: 'Day 4', date: '2026-11-22', city: '克拉科夫', plan: '瓦維爾城堡、鹽礦', stay: '克拉科夫', transport: '', duration: '', note: '還不知道要幹嘛的一天' },
-      { dayLabel: 'Day 5', date: '2026-11-23', city: '克拉科夫 -> 華沙', plan: '老城、皇家城堡', stay: '華沙', transport: '', duration: '', note: '' },
-      { dayLabel: 'Day 6', date: '2026-11-24', city: '華沙', plan: '自由探索與補圖', stay: '華沙', transport: '', duration: '', note: '' },
-      { dayLabel: 'Day 7', date: '2026-11-25', city: '華沙 -> 格但斯克', plan: '想去哪你說看看', stay: '格但斯克', transport: '', duration: '', note: '' },
-      { dayLabel: 'Day 8', date: '2026-11-26', city: '格但斯克', plan: '還沒研究', stay: '格但斯克', transport: '', duration: '', note: '' },
-      { dayLabel: 'Day 9', date: '2026-11-27', city: '格但斯克 -> 布拉格', plan: '返回布拉格', stay: '布拉格', transport: '飛機', duration: '約 1.5hr', note: '' },
-      { dayLabel: 'Day 10', date: '2026-11-28', city: '布拉格', plan: '城堡、聖維特教堂、黃金巷', stay: '布拉格', transport: '', duration: '', note: '' },
-      { dayLabel: 'Day 11', date: '2026-11-29', city: '布拉格', plan: '可以睡覺睡整天嗎？好哇！', stay: '布拉格', transport: '', duration: '', note: '' },
-      { dayLabel: 'Day 12', date: '2026-11-30', city: '布拉格 -> 台灣', plan: '掰掰歐洲', stay: '-', transport: '飛機', duration: '約 15hr', note: '' }
-    ],
-    '範例旅程'
-  );
-}
-
-function createJourneyTitleFromDays(days: JourneyPlanDay[], sourceName: string) {
-  const routeCities = days
-    .flatMap((day) => day.city.split(/(?:->|→|到)/g))
-    .map((city) => city.trim())
-    .filter(Boolean);
-  const startCity = routeCities[0] ?? '';
-  const endCity = routeCities[routeCities.length - 1] ?? '';
-  if (startCity && endCity && startCity !== endCity) return `${startCity}到${endCity}旅程`;
-  if (startCity) return `${startCity}旅程`;
-  return sourceName.replace(/\.[^.]+$/, '') || '匯入旅程';
-}
-
-function createJourneyDay(dayNumber: number, date: string, patch: Partial<JourneyPlanDay> = {}): JourneyPlanDay {
-  return {
-    id: createLocalId('day'),
-    dayLabel: patch.dayLabel || `Day ${dayNumber}`,
-    date,
-    city: patch.city ?? '',
-    stay: patch.stay ?? '',
-    entries: patch.entries ?? []
-  };
-}
-
-function createJourneyEntriesFromRow(row: JourneyImportRow, existingCount = 0, existingTime = '') {
-  const items = splitJourneyPlanItems(row.plan);
-  const plans = items.length ? items : [row.plan || row.transport || row.note || '待安排'];
-  const noteIndex = row.transport || /抵達|到達|出發|返回|飛機|火車|巴士/.test(plans[0] ?? '') ? 0 : plans.length - 1;
-  return plans.map((plan, index) => {
-    const note = plans.length === 1 || index === noteIndex ? row.note : '';
-    return createJourneyEntry(
-      {
-        ...row,
-        plan,
-        transport: index === 0 ? row.transport : '',
-        duration: index === 0 ? row.duration : '',
-        note
-      },
-      plans.length === 1 && existingTime ? existingTime : suggestJourneyTime(row, plan, index, plans.length, existingCount)
-    );
-  });
-}
-
-function autoScheduleJourneyDay(day: JourneyPlanDay): JourneyPlanDay {
-  const entries = day.entries.flatMap((entry, index) =>
-    createJourneyEntriesFromRow(
-      {
-        dayLabel: day.dayLabel,
-        date: day.date,
-        city: entry.city || day.city,
-        plan: entry.plan,
-        stay: entry.stay || day.stay,
-        transport: entry.transport,
-        duration: entry.duration,
-        note: entry.note
-      },
-      index,
-      entry.time
-    )
-  );
-  return {
-    ...day,
-    entries: entries.length ? entries : [createJourneyEntry({ ...emptyJourneyDraftRow, dayLabel: day.dayLabel, date: day.date, city: day.city, stay: day.stay, plan: '待安排' }, '09:30')]
-  };
-}
-
-function splitJourneyPlanItems(plan: string) {
-  return plan
-    .split(/[、，,；;／\/]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function suggestJourneyTime(row: JourneyImportRow, plan: string, index: number, total: number, existingCount: number) {
-  const text = `${row.city} ${row.transport} ${row.duration} ${row.note} ${plan}`;
-  const notedTime = extractLastClockTime(row.note);
-  if (index === 0 && notedTime && /抵達|到達|降落|機場/.test(text)) return notedTime;
-  if (index === 0 && /早班|RegioJet|火車|巴士|客運|飛機|機場|出發|返回|掰掰|->|→/.test(text)) {
-    if (/早班/.test(text)) return '08:00';
-    return '08:30';
-  }
-  if (/夜景|夜|晚餐|晚上/.test(plan)) return '18:30';
-  if (/睡覺|自由|補圖|還沒研究|想去哪|待安排/.test(plan)) return index === 0 ? '11:00' : JOURNEY_AUTO_TIME_SLOTS[Math.min(existingCount + index, JOURNEY_AUTO_TIME_SLOTS.length - 1)];
-  if (total === 1 && /集中營|預約/.test(text)) return '09:00';
-  return JOURNEY_AUTO_TIME_SLOTS[Math.min(existingCount + index, JOURNEY_AUTO_TIME_SLOTS.length - 1)];
-}
-
-function extractLastClockTime(value: string) {
-  const matches = [...value.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)];
-  const match = matches[matches.length - 1];
-  if (!match) return '';
-  return `${String(Number(match[1])).padStart(2, '0')}:${match[2]}`;
-}
-
-function createJourneyEntry(row: JourneyImportRow, time = ''): JourneyEntry {
-  return {
-    id: createLocalId('entry'),
-    time,
-    city: row.city,
-    plan: row.plan,
-    stay: row.stay,
-    transport: row.transport,
-    duration: row.duration,
-    note: row.note,
-    done: false
-  };
-}
-
-function normalizeJourneyTrip(value: Partial<JourneyTrip> | null | undefined): JourneyTrip | null {
-  if (!value || typeof value !== 'object') return null;
-  const days = Array.isArray(value.days)
-    ? value.days
-        .map((day, index): JourneyPlanDay | null => {
-          if (!day || typeof day !== 'object') return null;
-          const date = normalizeImportedDate(day.date ?? '', addDays(todayStart.value, index)) || formatDateKey(addDays(todayStart.value, index));
-          return {
-            id: typeof day.id === 'string' ? day.id : createLocalId('day'),
-            dayLabel: typeof day.dayLabel === 'string' && day.dayLabel ? day.dayLabel : `Day ${index + 1}`,
-            date,
-            city: typeof day.city === 'string' ? day.city : '',
-            stay: typeof day.stay === 'string' ? day.stay : '',
-            entries: Array.isArray(day.entries)
-              ? day.entries.map(normalizeJourneyEntry).filter((entry): entry is JourneyEntry => Boolean(entry))
-              : []
-          };
-        })
-        .filter((day): day is JourneyPlanDay => Boolean(day))
-    : [];
-  const safeDays = renumberJourneyDays(days.length ? days : [createJourneyDay(1, formatDateKey(todayStart.value))]);
-  const storedTitle = typeof value.title === 'string' && value.title.trim() ? value.title.trim() : '';
-  const title = storedTitle.includes('->') ? createJourneyTitleFromDays(safeDays, value.sourceName ?? '匯入旅程') : storedTitle || '未命名旅程';
-  return {
-    id: typeof value.id === 'string' ? value.id : createLocalId('trip'),
-    title,
-    startDate: safeDays[0].date,
-    endDate: safeDays[safeDays.length - 1].date,
-    createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
-    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : new Date().toISOString(),
-    sourceName: typeof value.sourceName === 'string' ? value.sourceName : '未知來源',
-    days: safeDays
-  };
-}
-
-function normalizeJourneyEntry(entry: Partial<JourneyEntry> | null | undefined): JourneyEntry | null {
-  if (!entry || typeof entry !== 'object') return null;
-  return {
-    id: typeof entry.id === 'string' ? entry.id : createLocalId('entry'),
-    time: typeof entry.time === 'string' ? entry.time : '',
-    city: typeof entry.city === 'string' ? entry.city : '',
-    plan: typeof entry.plan === 'string' ? entry.plan : '',
-    stay: typeof entry.stay === 'string' ? entry.stay : '',
-    transport: typeof entry.transport === 'string' ? entry.transport : '',
-    duration: typeof entry.duration === 'string' ? entry.duration : '',
-    note: typeof entry.note === 'string' ? entry.note : '',
-    done: Boolean(entry.done)
-  };
-}
-
-function renumberJourneyDays(days: JourneyPlanDay[]) {
-  return days.map((day, index) => ({
-    ...day,
-    dayLabel: day.dayLabel || `Day ${index + 1}`
-  }));
-}
-
-function getNearestJourneyTrip(trips: JourneyTrip[], from: Date) {
-  return [...trips].sort((left, right) => {
-    const leftStart = parseDateToDay(left.startDate).getTime();
-    const rightStart = parseDateToDay(right.startDate).getTime();
-    const fromTime = from.getTime();
-    const leftDistance = leftStart >= fromTime ? leftStart - fromTime : Math.abs(parseDateToDay(left.endDate).getTime() - fromTime) + DAY_MS * 365;
-    const rightDistance = rightStart >= fromTime ? rightStart - fromTime : Math.abs(parseDateToDay(right.endDate).getTime() - fromTime) + DAY_MS * 365;
-    return leftDistance - rightDistance;
-  })[0];
-}
-
-function normalizeImportedDate(value: string, fallback: Date) {
-  const text = value.trim();
-  if (!text) return '';
-  const normalized = text.replace(/[.]/g, '/');
-  let year = fallback.getFullYear();
-  let month = 0;
-  let day = 0;
-  const full = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/.exec(normalized);
-  const short = /^(\d{1,2})[/-](\d{1,2})$/.exec(normalized);
-  if (full) {
-    year = Number(full[1]);
-    month = Number(full[2]);
-    day = Number(full[3]);
-  } else if (short) {
-    month = Number(short[1]);
-    day = Number(short[2]);
-    const candidate = new Date(year, month - 1, day);
-    if (candidate.getTime() < addDays(todayStart.value, -180).getTime()) year += 1;
-  } else {
-    return '';
-  }
-  const maxDay = new Date(year, month, 0).getDate();
-  if (month < 1 || month > 12 || day < 1 || day > maxDay) return '';
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function parseDateToDay(value: string) {
-  const [year, month, day] = value.split('-').map(Number);
-  if (!year || !month || !day) return new Date(todayStart.value);
-  return new Date(year, month - 1, day);
-}
-
-function formatJourneyDateLabel(value: string) {
-  const date = parseDateToDay(value);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-function parseJourneyEntryDateTime(date: string, time: string, index: number) {
-  const day = parseDateToDay(date);
-  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
-  if (match) {
-    day.setHours(clamp(Number(match[1]), 0, 23), clamp(Number(match[2]), 0, 59), 0, 0);
-    return day;
-  }
-  day.setHours(9 + Math.min(index, 8), 0, 0, 0);
-  return day;
-}
-
-function parseTimeSortValue(value: string) {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) return Number.MAX_SAFE_INTEGER;
-  return clamp(Number(match[1]), 0, 23) * 60 + clamp(Number(match[2]), 0, 59);
-}
-
-function getJourneyEntrySectionId(entry: JourneyEntry) {
-  const minutes = parseTimeSortValue(entry.time);
-  if (minutes === Number.MAX_SAFE_INTEGER) return 'unscheduled';
-  if (minutes < 12 * 60) return 'morning';
-  if (minutes < 18 * 60) return 'afternoon';
-  return 'evening';
-}
-
-function normalizeImportCell(value: string | number | boolean | Date | null) {
-  if (value instanceof Date) return formatDateKey(value);
-  return String(value ?? '').replace(/\s+/g, ' ').trim();
-}
-
-function createLocalId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function updateAppThemeChrome(theme: ThemeId) {
@@ -3124,162 +2109,6 @@ function openThemeSettings() {
   launchThemeBurst();
 }
 
-function createJourneyDays(start: Date, target: Date): JourneyDay[] {
-  const totalDays = Math.max(Math.floor((startOfDay(target).getTime() - startOfDay(start).getTime()) / DAY_MS) + 1, 1);
-
-  return Array.from({ length: totalDays }, (_, index) => {
-    const dayNumber = index + 1;
-    const date = addDays(start, index);
-    const dateLabel = formatMonthDay(date);
-    const specialDay = specialJourneyDays[formatDateKey(date)];
-
-    if (specialDay) {
-      return { dateLabel, ...specialDay };
-    }
-
-    const phase = getRelationshipPhase(dayNumber);
-    const note = buildDailyNote(dayNumber, index, phase.label);
-    const task = buildDailyTask(dateLabel, index);
-    const capsule = buildDailyCapsule(dateLabel, index, phase.label);
-
-    return { dateLabel, note, task, capsule };
-  });
-}
-
-function buildDailyNote(dayNumber: number, index: number, phaseLabel: string) {
-  const opening = pick(noteTextures, index);
-  const whisper = pick(noteWhispers, index * 7);
-  const quietImage = pick(abstractNoteOpenings, index * 11);
-  const quietDetail = pick(abstractNoteDetails, index * 13);
-
-  return `第 ${dayNumber} 天｜${phaseLabel}。${opening}，${quietImage}。${whisper}；${quietDetail}`;
-}
-
-function buildDailyTask(dateLabel: string, index: number) {
-  const motion = pick(taskMotions, index * 5);
-  const object = pick(taskObjects, index * 7);
-  const softHint = pick(abstractTaskIdeas, index * 9);
-
-  return `${dateLabel} 小任務：${motion}，像收好${object}那樣。也可以只是${softHint}。`;
-}
-
-function buildDailyCapsule(dateLabel: string, index: number, phaseLabel: string) {
-  const adjective = pick(capsuleAdjectives, index * 3);
-  const noun = pick(capsuleNouns, index * 5);
-  const oldImage = pick(abstractCapsuleIdeas, index * 7);
-
-  return `${dateLabel}｜${phaseLabel}：${buildCapsuleLine(index, adjective, noun, oldImage)}`;
-}
-
-function buildCapsuleLine(index: number, adjective: string, noun: string, oldImage: string) {
-  const lines = [
-    `把${adjective}的${noun}收進今天，旁邊放著${oldImage}。`,
-    `${adjective}的${noun}停在頁邊，像${oldImage}。`,
-    `今天留下${noun}的一點${adjective}，也留下${oldImage}。`,
-    `有一點${adjective}落在${noun}上，慢慢變成${oldImage}。`,
-    `${oldImage}靠著${noun}睡著，夢裡有很${adjective}的光。`,
-    `把${oldImage}摺好，夾進${adjective}的${noun}裡。`,
-    `${noun}沒有說話，只替${oldImage}留下一點${adjective}。`,
-    `這一頁很輕，像${adjective}的${oldImage}，也像${noun}。`
-  ];
-
-  return lines[index % lines.length];
-}
-
-function getRelationshipPhase(dayNumber: number) {
-  return relationshipPhases.find((phase) => dayNumber <= phase.untilDay) ?? relationshipPhases[relationshipPhases.length - 1];
-}
-
-function getCountdown(value: Date, target: Date): Countdown {
-  if (value.getTime() >= target.getTime()) {
-    return { days: 0, hours: 0, minutes: 0, seconds: 0 };
-  }
-
-  const diff = Math.max(target.getTime() - value.getTime(), 0);
-
-  return {
-    days: Math.floor(diff / DAY_MS),
-    hours: Math.floor((diff % DAY_MS) / (60 * 60 * 1000)),
-    minutes: Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000)),
-    seconds: Math.floor((diff % (60 * 1000)) / 1000)
-  };
-}
-
-function parseClockTime(value: string, fallback: string): [number, number] {
-  const [rawHours, rawMinutes] = normalizeClockTime(value, fallback).split(':').map(Number);
-  return [rawHours, rawMinutes];
-}
-
-function normalizeClockTime(value: string, fallback: string) {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) return fallback;
-  const hours = clamp(Number(match[1]), 0, 23);
-  const minutes = clamp(Number(match[2]), 0, 59);
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-}
-
-function parseDateSetting(value: string, fallback = defaultSettings.startDate): [number, number, number] {
-  const normalized = normalizeDateSetting(value, fallback);
-  const [year, month, day] = normalized.split('-').map(Number);
-  return [year, month, day];
-}
-
-function normalizeDateSetting(value: string, fallback = defaultSettings.startDate) {
-  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value.trim());
-  if (!match) return fallback;
-  const year = clamp(Number(match[1]), 2020, 2035);
-  const month = clamp(Number(match[2]), 1, 12);
-  const maxDay = new Date(year, month, 0).getDate();
-  const day = clamp(Number(match[3]), 1, maxDay);
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function addDays(value: Date, days: number) {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate() + days);
-}
-
-function startOfDay(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
-}
-
-function formatDateKey(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function formatMonthDay(value: Date) {
-  return `${value.getMonth() + 1} 月 ${value.getDate()} 日`;
-}
-
-function pick<T>(items: T[], index: number) {
-  return items[index % items.length];
-}
-
-function getClosenessLabel(percent: number) {
-  if (percent >= 100) return '故事正式開始';
-  if (percent >= 88) return '快見面了';
-  if (percent >= 70) return '心意很近';
-  if (percent >= 48) return '慢慢靠近';
-  if (percent >= 24) return '熟悉發芽';
-  if (percent >= 8) return '觀察與好奇';
-  return '相識第一頁';
-}
-
-function getCheckinStreak(days: string[], fromDate: Date) {
-  const daySet = new Set(days);
-  let streak = 0;
-  let cursor = startOfDay(fromDate);
-
-  while (daySet.has(formatDateKey(cursor))) {
-    streak += 1;
-    cursor = addDays(cursor, -1);
-  }
-
-  return streak;
-}
-
 function gentleVibrate(duration: number) {
   if ('vibrate' in navigator) {
     navigator.vibrate(duration);
@@ -3336,9 +2165,6 @@ function requestFinishOpening() {
   introTimer = window.setTimeout(finishOpening, OPENING_SKIP_DURATION_MS);
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
 </script>
 
 <template>
@@ -3859,7 +2685,7 @@ function clamp(value: number, min: number, max: number) {
           <div class="travel-day-fields">
             <label>
               <span>日期</span>
-              <input :value="activeJourneyDay.date" inputmode="numeric" @input="updateJourneyDayField(activeJourneyDay.id, 'date', getInputValue($event))" />
+              <input :value="activeJourneyDay.date" type="date" @input="updateJourneyDayField(activeJourneyDay.id, 'date', getInputValue($event))" />
             </label>
             <label>
               <span>城市</span>
@@ -3880,7 +2706,26 @@ function clamp(value: number, min: number, max: number) {
               <ol class="travel-timeline">
                 <li v-for="entry in section.entries" :key="entry.id" class="travel-event" :class="{ done: entry.done }">
                   <div class="travel-event-time">
-                    <input :value="entry.time" placeholder="09:30" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', getInputValue($event))" />
+                    <label class="travel-time-input">
+                      <span>開始</span>
+                      <input
+                        :value="entry.time"
+                        type="time"
+                        step="60"
+                        aria-label="開始時間"
+                        @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', getInputValue($event))"
+                      />
+                    </label>
+                    <label class="travel-time-input">
+                      <span>結束</span>
+                      <input
+                        :value="entry.endTime"
+                        type="time"
+                        step="60"
+                        aria-label="結束時間"
+                        @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'endTime', getInputValue($event))"
+                      />
+                    </label>
                     <button class="travel-check" type="button" @click="toggleJourneyEntryDone(activeJourneyDay.id, entry.id)">
                       {{ entry.done ? '✓' : '+' }}
                     </button>
@@ -3930,7 +2775,7 @@ function clamp(value: number, min: number, max: number) {
             <button class="ghost-button" type="button" @click="createBlankJourneyTrip">建立空白旅程</button>
           </div>
           <div class="travel-create-row">
-            <input v-model="journeyNewDayDate" placeholder="新增日期，例如 2026-11-20" />
+            <input v-model="journeyNewDayDate" type="date" aria-label="新增日期" />
             <button class="ghost-button" type="button" @click="addJourneyDay">新增一天</button>
           </div>
           <div class="travel-actions">
@@ -4172,19 +3017,19 @@ function clamp(value: number, min: number, max: number) {
         </label>
         <label>
           <span>開始日期</span>
-          <input v-model="settingsDraft.startDate" inputmode="numeric" maxlength="10" placeholder="2026-04-08" />
+          <input v-model="settingsDraft.startDate" type="date" />
         </label>
         <label>
           <span>開始時間</span>
-          <input v-model="settingsDraft.startTime" inputmode="numeric" maxlength="5" placeholder="00:00" />
+          <input v-model="settingsDraft.startTime" type="time" step="60" />
         </label>
         <label>
           <span>目標日期</span>
-          <input v-model="settingsDraft.targetDate" inputmode="numeric" maxlength="10" placeholder="2026-08-14" />
+          <input v-model="settingsDraft.targetDate" type="date" />
         </label>
         <label>
           <span>目標時間</span>
-          <input v-model="settingsDraft.targetTime" inputmode="numeric" maxlength="5" placeholder="18:00" />
+          <input v-model="settingsDraft.targetTime" type="time" step="60" />
         </label>
       </div>
       <div class="date-timeline-control">
@@ -4376,15 +3221,15 @@ function clamp(value: number, min: number, max: number) {
             class="capsule-card"
             :class="{ flipped: capsule.flipped }"
             type="button"
-            :disabled="!capsule.unlocked"
-            @click="toggleCapsule(capsule.index, capsule.unlocked)"
+            :aria-label="capsule.unlocked ? `打開 ${capsule.dateLabel} 膠囊` : `查看 ${capsule.dateLabel} 膠囊解鎖時間`"
+            @click="toggleCapsule(capsule.index)"
           >
             <span class="capsule-face capsule-front">
               <span class="capsule-index">{{ String(capsule.index + 1).padStart(2, '0') }}</span>
               <span>{{ capsule.unlocked ? capsule.dateLabel : `${capsule.dateLabel} 尚未解鎖` }}</span>
             </span>
             <span class="capsule-face capsule-back">
-              <span>{{ capsule.text }}</span>
+              <span>{{ capsule.unlocked ? capsule.text : capsule.lockedText }}</span>
             </span>
           </button>
         </li>
