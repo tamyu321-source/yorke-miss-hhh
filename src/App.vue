@@ -1085,24 +1085,33 @@ async function unlockApp() {
 
   try {
     cloudToken.value = await requestCloudSession(password);
-    passwordSuccess.value = true;
-    passwordStatus.value = '暗號通過，正在打開今天。';
-    await waitForPasswordSuccess();
-    passwordStatus.value = '正在載入雲端資料...';
-    await loadCloudData();
-    appUnlocked.value = true;
-    startOpeningSequence();
-    passwordSuccess.value = false;
-    passwordInput.value = '';
-    passwordStatus.value = '';
-    startCloudSyncLoop();
   } catch {
     clearCloudSession();
     cloudToken.value = '';
     appUnlocked.value = false;
     passwordSuccess.value = false;
     passwordStatus.value = '密碼不對，提示：小笨蛋生日。';
+    passwordBusy.value = false;
+    return;
+  }
+
+  passwordSuccess.value = true;
+  passwordStatus.value = '暗號通過，正在打開今天。';
+  await waitForPasswordSuccess();
+  passwordStatus.value = '正在載入雲端資料...';
+
+  try {
+    await loadCloudData();
+    passwordStatus.value = '';
+  } catch {
+    cloudStatus.value = '暗號已通過，但雲端資料暫時載入失敗。';
+    passwordStatus.value = '暗號已通過，但雲端資料暫時載入失敗。';
   } finally {
+    appUnlocked.value = true;
+    startOpeningSequence();
+    passwordSuccess.value = false;
+    passwordInput.value = '';
+    startCloudSyncLoop();
     passwordBusy.value = false;
   }
 }

@@ -72,7 +72,8 @@ async function cloudFetch<T = unknown>(
   });
 
   if (!response.ok) {
-    throw new Error(`Cloud request failed: ${response.status}`);
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Cloud request failed: ${response.status}${detail ? ` ${detail}` : ''}`);
   }
 
   return (await response.json()) as T;
