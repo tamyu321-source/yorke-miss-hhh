@@ -38,11 +38,11 @@ export default createContextViewComponent('MemoriesView');
         </div>
       </div>
       <div class="secret-code-row">
-        <input v-model="secretCodeInput" maxlength="16" placeholder="輸入暗號" />
+        <input v-model="secretCodeInput" maxlength="16" placeholder="輸入暗號" @keyup.enter="unlockSecretCode" />
         <button class="soft-button" type="button" @click="unlockSecretCode">解鎖</button>
       </div>
       <div class="secret-code-row">
-        <input v-model="newSecretCode" maxlength="16" placeholder="新增暗號" />
+        <input v-model="newSecretCode" maxlength="16" placeholder="新增暗號" @keyup.enter="addCustomSecretCode" />
         <button class="ghost-button" type="button" @click="addCustomSecretCode">加入</button>
       </div>
       <div v-if="customSecretCodes.length" class="secret-code-list">
@@ -50,9 +50,30 @@ export default createContextViewComponent('MemoriesView');
           {{ code }} ×
         </button>
       </div>
-      <p class="hidden-card" :class="{ unlocked: secretCodeUnlocked }">
-        {{ secretCodeUnlocked ? hiddenCardLine : '卡片還在信封裡。' }}
-      </p>
+      <div v-if="secretCodeUnlocked" class="hidden-card-editor">
+        <input v-model="hiddenCardTitleDraft" maxlength="28" placeholder="卡片標題" />
+        <textarea v-model="hiddenCardTextDraft" maxlength="220" placeholder="寫一張只有解鎖後才看得到的卡片"></textarea>
+        <div class="message-actions">
+          <span>{{ hiddenCardTextDraft.length }} / 220</span>
+          <div>
+            <button v-if="editingHiddenCardId" class="ghost-button" type="button" @click="cancelHiddenCardEdit">取消</button>
+            <button class="soft-button" type="button" @click="saveHiddenCard">
+              {{ editingHiddenCardId ? '保存修改' : '新增卡片' }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-if="secretCodeUnlocked" class="hidden-card-list">
+        <article v-for="card in hiddenCards" :key="card.id" class="hidden-card unlocked">
+          <strong>{{ card.title }}</strong>
+          <p>{{ card.text }}</p>
+          <div>
+            <button type="button" @click="editHiddenCard(card.id)">編輯</button>
+            <button type="button" @click="removeHiddenCard(card.id)">刪除</button>
+          </div>
+        </article>
+      </div>
+      <p v-else class="hidden-card">卡片還在信封裡，輸入暗號後就能新增和編輯。</p>
     </section>
 
     <section v-show="activeTab === 'memories'" class="photo-wall-section" aria-labelledby="photo-wall-title">
@@ -88,7 +109,7 @@ export default createContextViewComponent('MemoriesView');
           </figcaption>
         </figure>
       </div>
-      <p v-else class="empty-photo-note">照片只會存在這台裝置裡。</p>
+      <p v-else class="empty-photo-note">照片會先壓縮，再同步到回憶 API。</p>
     </section>
 
     <section v-show="activeTab === 'memories'" class="wish-section" aria-labelledby="wish-title">
@@ -126,7 +147,7 @@ export default createContextViewComponent('MemoriesView');
       <ol class="capsule-list">
         <li
           v-for="capsule in visibleCapsulesDisplay"
-          :key="capsule.text"
+          :key="capsule.index"
           :class="{ locked: !capsule.unlocked, newest: capsule.unlocked && capsule.index === unlockedCount - 1 }"
         >
           <button
@@ -136,14 +157,29 @@ export default createContextViewComponent('MemoriesView');
             :aria-label="capsule.unlocked ? `打開 ${capsule.dateLabel} 膠囊` : `查看 ${capsule.dateLabel} 膠囊解鎖時間`"
             @click="toggleCapsule(capsule.index)"
           >
-            <span class="capsule-face capsule-front">
+            <span v-if="!capsule.flipped" class="capsule-face capsule-front">
               <span class="capsule-index">{{ String(capsule.index + 1).padStart(2, '0') }}</span>
               <span>{{ capsule.unlocked ? capsule.dateLabel : `${capsule.dateLabel} 尚未解鎖` }}</span>
             </span>
-            <span class="capsule-face capsule-back">
+            <span v-else class="capsule-face capsule-back">
               <span>{{ capsule.unlocked ? capsule.text : capsule.lockedText }}</span>
             </span>
           </button>
+          <div v-if="capsule.unlocked" class="capsule-tools">
+            <button class="ghost-button" type="button" @click="startEditCapsule(capsule.index)">
+              {{ capsule.customized ? '編輯文字' : '寫自己的版本' }}
+            </button>
+          </div>
+          <div v-if="capsule.editing" class="capsule-edit-panel">
+            <textarea v-model="capsuleEditText" maxlength="160" placeholder="改寫這顆膠囊的文字"></textarea>
+            <div class="message-actions">
+              <span>{{ capsuleEditText.length }} / 160</span>
+              <div>
+                <button class="ghost-button" type="button" @click="cancelEditCapsule">取消</button>
+                <button class="soft-button" type="button" @click="saveCapsuleNote">保存</button>
+              </div>
+            </div>
+          </div>
         </li>
       </ol>
       <button class="wide-soft-button" type="button" @click="capsuleShowAll = !capsuleShowAll">

@@ -60,6 +60,20 @@ export type MemoryPhoto = {
   dataUrl: string;
 };
 
+export type MemoryCapsuleNote = {
+  index: number;
+  text: string;
+  updatedAt: string;
+};
+
+export type HiddenCardItem = {
+  id: string;
+  title: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type DailyQuestion = {
   prompt: string;
   hint: string;

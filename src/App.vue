@@ -32,11 +32,13 @@ import type {
   BurstParticle,
   CountdownUnit,
   Countdown,
+  HiddenCardItem,
   JourneyEditableEntryField,
   JourneyImportRow,
   JourneyPanelMode,
   JourneyScheduleSection,
   JourneyTrip,
+  MemoryCapsuleNote,
   MemoryPhoto,
   PeriodRecord,
   PlaneDragState,
@@ -111,6 +113,9 @@ const planeDrag = ref<PlaneDragState>({ dragging: false, startX: 0, startY: 0, o
 const secretCodeInput = ref('');
 const secretCodeUnlocked = ref(false);
 const memoryPhotos = ref<MemoryPhoto[]>([]);
+const memoryCapsuleNotes = ref<MemoryCapsuleNote[]>([]);
+const editingCapsuleIndex = ref<number | null>(null);
+const capsuleEditText = ref('');
 const dailyAnswer = ref('');
 const radarChoiceId = ref('');
 const meetingChecklist = ref<string[]>([]);
@@ -121,6 +126,10 @@ const installReady = ref(false);
 const installedDisplayMode = ref(false);
 const customSecretCodes = ref<string[]>([]);
 const newSecretCode = ref('');
+const hiddenCards = ref<HiddenCardItem[]>([]);
+const hiddenCardTitleDraft = ref('');
+const hiddenCardTextDraft = ref('');
+const editingHiddenCardId = ref('');
 const importMessage = ref('');
 const pendingImport = ref<AppExportData | null>(null);
 const importMode = ref<'merge' | 'replace'>('merge');
@@ -979,13 +988,16 @@ const visibleCapsules = computed(() =>
   journeyDays.value.map((day, index) => {
     const unlockDate = addDays(configuredStartDay.value, index);
     const daysToUnlock = Math.max(Math.ceil((unlockDate.getTime() - todayStart.value.getTime()) / DAY_MS), 1);
+    const customNote = memoryCapsuleNotes.value.find((note) => note.index === index)?.text.trim();
     return {
-      text: day.capsule,
+      text: customNote || day.capsule,
       lockedText: `${day.dateLabel} 的膠囊還沒到時間，還有 ${daysToUnlock} 天會自己打開。`,
       dateLabel: day.dateLabel,
       index,
       unlocked: index < unlockedCount.value,
-      flipped: flippedCapsules.value.includes(index)
+      flipped: flippedCapsules.value.includes(index),
+      customized: Boolean(customNote),
+      editing: editingCapsuleIndex.value === index
     };
   })
 );
@@ -1216,6 +1228,8 @@ onMounted(() => {
   loadSecretCode();
   loadCustomSecretCodes();
   loadMemoryPhotos();
+  loadMemoryCapsules();
+  loadHiddenCards();
   loadMeetingChecklist();
   loadWishes();
   loadMeetingMoments();
@@ -1718,6 +1732,66 @@ function toggleCapsule(index: number) {
   }
 
   flippedCapsules.value = Array.from(flipped);
+  localStorage.setItem(storageKey('flipped-capsules'), JSON.stringify(flippedCapsules.value));
+  requestCloudSync('memories');
+}
+
+function startEditCapsule(index: number) {
+  if (index >= unlockedCount.value) return;
+  const capsule = visibleCapsules.value.find((item) => item.index === index);
+  editingCapsuleIndex.value = index;
+  capsuleEditText.value = capsule?.text ?? '';
+}
+
+function saveCapsuleNote() {
+  if (editingCapsuleIndex.value === null) return;
+  const index = editingCapsuleIndex.value;
+  const text = capsuleEditText.value.trim().slice(0, 160);
+  const next = memoryCapsuleNotes.value.filter((note) => note.index !== index);
+  if (text) {
+    next.push({
+      index,
+      text,
+      updatedAt: new Date().toISOString()
+    });
+  }
+  memoryCapsuleNotes.value = next.sort((left, right) => left.index - right.index);
+  localStorage.setItem(storageKey('capsule-notes'), JSON.stringify(memoryCapsuleNotes.value));
+  editingCapsuleIndex.value = null;
+  capsuleEditText.value = '';
+  requestCloudSync('memories');
+}
+
+function cancelEditCapsule() {
+  editingCapsuleIndex.value = null;
+  capsuleEditText.value = '';
+}
+
+function loadMemoryCapsules() {
+  const storedNotes = localStorage.getItem(storageKey('capsule-notes'));
+  const storedFlipped = localStorage.getItem(storageKey('flipped-capsules'));
+
+  try {
+    const parsed = storedNotes ? JSON.parse(storedNotes) : [];
+    if (Array.isArray(parsed)) {
+      memoryCapsuleNotes.value = parsed
+        .filter((note): note is MemoryCapsuleNote =>
+          typeof note?.index === 'number' && typeof note?.text === 'string' && typeof note?.updatedAt === 'string'
+        )
+        .map((note) => ({ ...note, text: note.text.slice(0, 160) }));
+    }
+  } catch {
+    memoryCapsuleNotes.value = [];
+  }
+
+  try {
+    const parsed = storedFlipped ? JSON.parse(storedFlipped) : [];
+    if (Array.isArray(parsed)) {
+      flippedCapsules.value = parsed.filter((index): index is number => Number.isInteger(index) && index >= 0);
+    }
+  } catch {
+    flippedCapsules.value = [];
+  }
 }
 
 function launchSparkles() {
@@ -1822,7 +1896,8 @@ function unlockSecretCode() {
   if (!secretCodeList.value.includes(normalized)) return;
   secretCodeUnlocked.value = true;
   localStorage.setItem(storageKey('secret-code'), 'open');
-  requestCloudSync('prepare');
+  secretCodeInput.value = '';
+  requestCloudSync('memories');
   playSoftSound('secret');
   gentleVibrate(18);
 }
@@ -1837,13 +1912,13 @@ function addCustomSecretCode() {
   customSecretCodes.value = [...customSecretCodes.value, code];
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
   newSecretCode.value = '';
-  requestCloudSync('prepare');
+  requestCloudSync('memories');
 }
 
 function removeCustomSecretCode(code: string) {
   customSecretCodes.value = customSecretCodes.value.filter((item) => item !== code);
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
-  requestCloudSync('prepare');
+  requestCloudSync('memories');
 }
 
 function loadCustomSecretCodes() {
@@ -1857,6 +1932,98 @@ function loadCustomSecretCodes() {
     }
   } catch {
     customSecretCodes.value = [];
+  }
+}
+
+function saveHiddenCard() {
+  if (!secretCodeUnlocked.value) return;
+  const title = hiddenCardTitleDraft.value.trim().slice(0, 28) || '未命名卡片';
+  const text = hiddenCardTextDraft.value.trim().slice(0, 220);
+  if (!text) return;
+
+  const nowIso = new Date().toISOString();
+  if (editingHiddenCardId.value) {
+    hiddenCards.value = hiddenCards.value.map((card) =>
+      card.id === editingHiddenCardId.value
+        ? { ...card, title, text, updatedAt: nowIso }
+        : card
+    );
+  } else {
+    hiddenCards.value = [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        title,
+        text,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      },
+      ...hiddenCards.value
+    ].slice(0, 12);
+  }
+
+  hiddenCardTitleDraft.value = '';
+  hiddenCardTextDraft.value = '';
+  editingHiddenCardId.value = '';
+  persistHiddenCards();
+  playSoftSound('paper');
+}
+
+function editHiddenCard(id: string) {
+  const card = hiddenCards.value.find((item) => item.id === id);
+  if (!card) return;
+  editingHiddenCardId.value = card.id;
+  hiddenCardTitleDraft.value = card.title;
+  hiddenCardTextDraft.value = card.text;
+}
+
+function removeHiddenCard(id: string) {
+  hiddenCards.value = hiddenCards.value.filter((card) => card.id !== id);
+  if (editingHiddenCardId.value === id) {
+    cancelHiddenCardEdit();
+  }
+  persistHiddenCards();
+}
+
+function cancelHiddenCardEdit() {
+  editingHiddenCardId.value = '';
+  hiddenCardTitleDraft.value = '';
+  hiddenCardTextDraft.value = '';
+}
+
+function persistHiddenCards() {
+  localStorage.setItem(storageKey('hidden-cards'), JSON.stringify(hiddenCards.value));
+  requestCloudSync('memories');
+}
+
+function loadHiddenCards() {
+  const stored = localStorage.getItem(storageKey('hidden-cards'));
+  if (!stored) {
+    hiddenCards.value = [
+      {
+        id: 'default-hidden-card',
+        title: '第一張隱藏卡片',
+        text: hiddenCardLine.value,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ];
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(parsed)) {
+      hiddenCards.value = parsed.filter(
+        (card): card is HiddenCardItem =>
+          typeof card?.id === 'string' &&
+          typeof card?.title === 'string' &&
+          typeof card?.text === 'string' &&
+          typeof card?.createdAt === 'string' &&
+          typeof card?.updatedAt === 'string'
+      );
+    }
+  } catch {
+    hiddenCards.value = [];
   }
 }
 
@@ -1884,30 +2051,19 @@ function clearDailyAnswer() {
   requestCloudSync('today');
 }
 
-function addMemoryPhotos(event: Event) {
+async function addMemoryPhotos(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files ?? []).slice(0, 4);
   if (!files.length) return;
 
-  files.forEach((file) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? '');
-      if (!dataUrl.startsWith('data:image/')) return;
-      memoryPhotos.value = [
-        {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          name: file.name,
-          dataUrl
-        },
-        ...memoryPhotos.value
-      ].slice(0, 8);
-      saveMemoryPhotos();
-      launchThemeBurst();
-    };
-    reader.readAsDataURL(file);
-  });
+  const photos = (await Promise.all(files.map((file) => createMemoryPhoto(file)))).filter(
+    (photo): photo is MemoryPhoto => Boolean(photo)
+  );
+  if (!photos.length) return;
 
+  memoryPhotos.value = [...photos, ...memoryPhotos.value].slice(0, 8);
+  await saveMemoryPhotos();
+  launchThemeBurst();
   input.value = '';
   gentleVibrate(10);
 }
@@ -2021,6 +2177,8 @@ function reloadPersistentState() {
   loadMoodHistory();
   loadSecretCode();
   loadCustomSecretCodes();
+  loadMemoryCapsules();
+  loadHiddenCards();
   loadMeetingChecklist();
   loadSettings();
   loadWishes();
@@ -2028,6 +2186,57 @@ function reloadPersistentState() {
   loadJourneyTrips();
   loadPeriodRecords();
   loadPeriodPrivacyMode();
+}
+
+async function createMemoryPhoto(file: File): Promise<MemoryPhoto | null> {
+  try {
+    const dataUrl = await compressImageFile(file);
+    if (!dataUrl.startsWith('data:image/')) return null;
+    return {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      name: file.name,
+      dataUrl
+    };
+  } catch {
+    return null;
+  }
+}
+
+function compressImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+
+    image.onload = () => {
+      try {
+        const maxSide = 1280;
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Canvas is unavailable.');
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        let quality = 0.82;
+        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+        while (dataUrl.length > 720_000 && quality > 0.48) {
+          quality -= 0.08;
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+        }
+        resolve(dataUrl);
+      } catch (error) {
+        reject(error);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Image could not be loaded.'));
+    };
+    image.src = url;
+  });
 }
 
 function resetToday() {
@@ -3929,8 +4138,8 @@ provide(appViewContextKey, {
   addJourneyEntry, addMemoryPhotos, addMoodHistory, addPeriodRecord, addWish,
   applyImportData, appUnlocked, arrivalReadyPercent, arrivalSteps,
   autoScheduleActiveJourney, backgroundBeams, backgroundMotes, BOY_NAME,
-  burstParticles, cancelImportData, cancelSecretPress, capsuleShowAll,
-  cancelEditPeriodRecord,
+  burstParticles, cancelImportData, cancelSecretPress, capsuleEditText, capsuleShowAll,
+  cancelEditCapsule, cancelEditPeriodRecord, cancelHiddenCardEdit,
   checkedInToday, checkForAppUpdate, checkins, checkinStreak,
   checkInToday, chooseRadar, clearDailyAnswer, clearDailyMessage,
   closenessLabel, cloudLoadingActive, cloudLoadingSteps, cloudStatus,
@@ -3941,13 +4150,13 @@ provide(appViewContextKey, {
   dateKey, daysUntilMeeting, dismissOnboarding, dismissUpdateToast,
   displayBoyName, displayGirlName, draftStartDate, draftTargetDate,
   editingPeriodRecordId,
-  drawFortune, endPlaneDrag, enterUnlockedApp, exportActiveJourneyCalendar,
+  drawFortune, editHiddenCard, editingCapsuleIndex, editingHiddenCardId, endPlaneDrag, enterUnlockedApp, exportActiveJourneyCalendar,
   exportData, exportMeetingCalendar, finishOpening, flippedCapsules,
   flipUnits, formatDateKey, formatJourneyDateLabel, fortuneDeck, fortuneLine, fortuneReady,
   fortuneTitle, gentleVibrate, getCloudSettingsUpdatedAt, getComparableCloudSnapshot,
   getInputValue, getLocalSettingsUpdatedAt, getStorageTimestamp, getTextareaValue,
   GIRL_NAME, handleAppInstalled, handleBeforeInstallPrompt, handleControllerChange,
-  hiddenCardLine, importData, importJourneyFile, importJourneyRows,
+  hiddenCardLine, hiddenCards, hiddenCardTextDraft, hiddenCardTitleDraft, importData, importJourneyFile, importJourneyRows,
   importJourneyText, importMessage, importMode, installApp,
   installedDisplayMode, installReady, introActive, introClosing,
   introMode, isArrivalMode, isIosDevice, isMeetingDay,
@@ -3961,7 +4170,7 @@ provide(appViewContextKey, {
   loadSecretCode, loadSettings, loadSuitcase, loadWishes,
   localDataMode, localPreviewMode, lockApp, mailSecret,
   meetingChecklist, meetingChecklistItems, meetingChecklistProgress, meetingMomentItems,
-  meetingMoments, meetingSummary, meetingSummaryLine, memoryPhotos,
+  meetingMoments, meetingSummary, meetingSummaryLine, memoryCapsuleNotes, memoryPhotos,
   milestoneFlash, moodBottleDots, moodHistory, moodOptions,
   movePlaneDrag, navIndicatorStyle, newPeriodCare, newPeriodEndDate,
   newPeriodFlow, newPeriodMoods, newPeriodNote, newPeriodPainLevel,
@@ -3984,11 +4193,11 @@ provide(appViewContextKey, {
   radarChoiceId, radarChoiceResult, radarChoices, radarResult,
   radarScanned, rawDayIndex, refreshForUpdate, reloadPersistentState,
   removeCustomSecretCode, removeJourneyDay, removeJourneyEntry, removeJourneyTrip,
-  removeMemoryPhoto, removePeriodRecord, removeWish, requestCloudSync, requestFinishOpening,
+  removeHiddenCard, removeMemoryPhoto, removePeriodRecord, removeWish, requestCloudSync, requestFinishOpening,
   resetPeriodCalendar,
   resetSettings, resetToday, restoreSavedCloudSession, revealSecret,
   ritualComplete, ritualOpened, ritualProgress, ritualSteps,
-  routeFillStyle, saveDailyAnswer, saveDailyMessage, savedMessageLine,
+  routeFillStyle, saveCapsuleNote, saveDailyAnswer, saveDailyMessage, saveHiddenCard, savedMessageLine,
   saveJourneyTrips, saveMemoryPhotos, saveSettings, saveWishes,
   scanRadar, sceneStyle, sceneTilt, secretCodeInput,
   secretCodeList, secretCodeUnlocked, secretMailed, secretPressing,
@@ -3997,6 +4206,7 @@ provide(appViewContextKey, {
   selectMood, setSettingsUpdatedAt, settings, settingsDraft,
   shareCopied, showPasswordInstallHint, sparkles, startCloudSyncLoop,
   shiftPeriodCalendar, startDateLabel, startEditPeriodRecord, startOpeningSequence, startPlaneDrag, startSecretPress,
+  startEditCapsule,
   suitcaseChecked, suitcaseItems, suitcaseProgress, syncCloudNow,
   targetDate, targetDateLabel, targetDateShortLabel, targetDayStart,
   targetOffsetDays, targetOffsetMax, targetTimelineStyle, taskCompleted,

@@ -25,6 +25,10 @@ type FeatureResponse = {
   data: CloudFeaturePayload | null;
 };
 
+type MemoryPhotosResponse = {
+  photos: AppExportData['photos'];
+};
+
 const CLOUD_FEATURES: CloudFeature[] = [
   'settings',
   'today',
@@ -65,8 +69,8 @@ const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
     'checkins',
     'mood-history'
   ],
-  prepare: ['suitcase', 'secret-code', 'custom-secret-codes', 'meeting-checklist'],
-  memories: ['meeting-moments'],
+  prepare: ['suitcase', 'meeting-checklist'],
+  memories: ['meeting-moments', 'capsule-notes', 'flipped-capsules', 'hidden-cards', 'secret-code', 'custom-secret-codes'],
   wishes: ['wishes'],
   period: ['period-records', 'period-privacy-mode'],
   journey: ['journey-trips', 'active-journey-trip']
@@ -122,7 +126,9 @@ export async function fetchCloudState(token: string) {
     );
     const featureData = Object.fromEntries(responses) as Partial<Record<CloudFeature, CloudFeaturePayload | null>>;
     if (Object.values(featureData).some(Boolean)) {
-      return mergeFeaturePayloads(featureData, legacyData);
+      const merged = mergeFeaturePayloads(featureData, legacyData);
+      merged.photos = await fetchMemoryPhotos(token, merged.photos);
+      return merged;
     }
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
@@ -145,6 +151,9 @@ export async function saveCloudState(token: string, data: AppExportData, feature
         })
       )
     );
+    if (featuresToSave.includes('memories')) {
+      await saveMemoryPhotos(token, data.photos);
+    }
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
     await cloudFetch('/api/state', {
@@ -214,6 +223,27 @@ function classifyStorageKey(key: string): CloudFeature {
   }
 
   return kind === 'memory-photos' ? 'memories' : 'misc';
+}
+
+async function fetchMemoryPhotos(token: string, fallbackPhotos: AppExportData['photos']) {
+  try {
+    const response = await cloudFetch<MemoryPhotosResponse>('/api/memory-photos', {
+      method: 'GET',
+      token
+    });
+    return Array.isArray(response.photos) ? response.photos : fallbackPhotos;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    return fallbackPhotos;
+  }
+}
+
+async function saveMemoryPhotos(token: string, photos: AppExportData['photos']) {
+  await cloudFetch('/api/memory-photos', {
+    method: 'PUT',
+    token,
+    body: JSON.stringify({ photos })
+  });
 }
 
 function isNotFoundError(error: unknown) {

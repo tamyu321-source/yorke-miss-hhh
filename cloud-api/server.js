@@ -22,6 +22,7 @@ const FEATURE_ROUTES = [
   ['journey', '/api/journey'],
   ['misc', '/api/misc']
 ];
+const MEMORY_PHOTO_KIND = 'memory-photo';
 
 app.use(express.json({ limit: '15mb' }));
 app.use((request, response, next) => {
@@ -107,6 +108,72 @@ for (const [feature, path] of FEATURE_ROUTES) {
     }
   });
 }
+
+app.get('/api/memory-photos', requireAuth, async (_request, response, next) => {
+  try {
+    const snapshot = await firestore
+      .collection(FIRESTORE_COLLECTION)
+      .where('kind', '==', MEMORY_PHOTO_KIND)
+      .get();
+    const photos = snapshot.docs
+      .map((document) => document.data()?.photo)
+      .filter(
+        (photo) =>
+          photo &&
+          typeof photo.id === 'string' &&
+          typeof photo.name === 'string' &&
+          typeof photo.dataUrl === 'string'
+      );
+    response.json({ photos });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/memory-photos', requireAuth, async (request, response, next) => {
+  try {
+    const photos = normalizeMemoryPhotos(request.body?.photos);
+    const collection = firestore.collection(FIRESTORE_COLLECTION);
+    const existing = await collection.where('kind', '==', MEMORY_PHOTO_KIND).get();
+    const nextIds = new Set(photos.map((photo) => photo.id));
+    const batch = firestore.batch();
+
+    existing.docs.forEach((document) => {
+      if (!nextIds.has(document.data()?.photo?.id)) {
+        batch.delete(document.ref);
+      }
+    });
+
+    photos.forEach((photo) => {
+      batch.set(
+        collection.doc(`${FIRESTORE_DOCUMENT}-memory-photo-${safeDocumentId(photo.id)}`),
+        {
+          kind: MEMORY_PHOTO_KIND,
+          photo,
+          updatedAt: FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+    });
+
+    await batch.commit();
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/memory-photos/:id', requireAuth, async (request, response, next) => {
+  try {
+    await firestore
+      .collection(FIRESTORE_COLLECTION)
+      .doc(`${FIRESTORE_DOCUMENT}-memory-photo-${safeDocumentId(request.params.id)}`)
+      .delete();
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.use((error, _request, response, _next) => {
   console.error(error);
@@ -217,17 +284,31 @@ function normalizeFeaturePayload(data, feature) {
     localStorage
   };
 
-  if (feature === 'memories') {
-    payload.photos = Array.isArray(data.photos)
-      ? data.photos.filter(
-          (photo) =>
-            photo &&
-            typeof photo.id === 'string' &&
-            typeof photo.name === 'string' &&
-            typeof photo.dataUrl === 'string'
-        )
-      : [];
+  return payload;
+}
+
+function normalizeMemoryPhotos(photos) {
+  if (!Array.isArray(photos)) {
+    throw new Error('Memory photos payload must be an array.');
   }
 
-  return payload;
+  return photos
+    .filter(
+      (photo) =>
+        photo &&
+        typeof photo.id === 'string' &&
+        typeof photo.name === 'string' &&
+        typeof photo.dataUrl === 'string' &&
+        photo.dataUrl.startsWith('data:image/')
+    )
+    .slice(0, 8)
+    .map((photo) => ({
+      id: photo.id.slice(0, 120),
+      name: photo.name.slice(0, 180),
+      dataUrl: photo.dataUrl
+    }));
+}
+
+function safeDocumentId(value) {
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 160) || 'photo';
 }
