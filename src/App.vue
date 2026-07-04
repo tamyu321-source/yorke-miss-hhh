@@ -905,17 +905,21 @@ const professionalPeriodCalendarDays = computed(() => {
     const isPredictedPeriod = Boolean(predictedStart && predictedEnd && date.getTime() >= predictedStart.getTime() && date.getTime() <= predictedEnd.getTime());
     const isFertile = Boolean(fertileStart && ovulation && date.getTime() >= fertileStart.getTime() && date.getTime() <= ovulation.getTime());
     const isOvulation = Boolean(ovulation && key === formatDateKey(ovulation));
+    const isMonthStart = date.getDate() === 1;
+    const monthLabel = index === 0 || isMonthStart ? `${date.getMonth() + 1}月` : '';
     const markers = [
       actualRecord ? 'recorded' : '',
       !actualRecord && isPredictedPeriod ? 'predicted' : '',
       isFertile ? 'fertile' : '',
       isOvulation ? 'ovulation' : '',
+      isMonthStart ? 'month-start' : '',
       key === dateKey.value ? 'today' : ''
     ].filter(Boolean);
     return {
       key,
       dayNumber: date.getDate(),
       weekday: ['日', '一', '二', '三', '四', '五', '六'][date.getDay()],
+      monthLabel,
       label: actualRecord ? periodDisplayName : isOvulation ? '排卵' : isFertile ? '受孕窗' : isPredictedPeriod ? '預估' : '',
       classes: markers.map((marker) => `is-${marker}`)
     };
@@ -1088,6 +1092,35 @@ const activeJourneyDayMeta = computed(() => {
     stay: day.stay,
     city: day.city
   };
+});
+const journeyDayRailItems = computed(() =>
+  activeJourneyDays.value.map((day, index) => {
+    const done = day.entries.filter((entry) => entry.done).length;
+    const total = day.entries.length;
+    return {
+      id: day.id,
+      dayLabel: day.dayLabel || `Day ${index + 1}`,
+      dateLabel: formatJourneyDateLabel(day.date),
+      city: day.city || '未設定城市',
+      stay: day.stay || '未設定住宿',
+      done,
+      total,
+      isActive: activeJourneyDay.value?.id === day.id,
+      isToday: formatDateKey(parseDateToDay(day.date)) === dateKey.value
+    };
+  })
+);
+const activeJourneyRouteLabel = computed(() => {
+  const cities = activeJourneyDays.value
+    .map((day) => day.city.trim())
+    .filter(Boolean)
+    .filter((city, index, list) => list.indexOf(city) === index);
+  return cities.length ? cities.join(' → ') : '先補上每日城市';
+});
+const activeJourneyNextEntry = computed(() => {
+  const entry = activeJourneyDayEntries.value.find((item) => !item.done) ?? activeJourneyDayEntries.value[0];
+  if (!entry) return '尚未安排';
+  return `${entry.time || '--:--'} ${entry.plan || '未命名行程'}`;
 });
 const journeySummaryStats = computed(() => {
   const trip = activeJourneyTrip.value;
@@ -4161,9 +4194,11 @@ provide(appViewContextKey, {
   installedDisplayMode, installReady, introActive, introClosing,
   introMode, isArrivalMode, isIosDevice, isMeetingDay,
   isOnline, isScamRadarDay, JOURNEY_AUTO_TIME_SLOTS, journeyCalendarCells,
+  journeyDayRailItems,
   journeyDays, journeyImportBusy, journeyImportHelp, journeyImportMessage,
   journeyImportText, journeyNewDayDate, journeyNewTripTitle, journeyOcrProgress,
   journeyPanelMode, journeySummaryStats, journeyTripCountdownLabel, journeyTripOptions,
+  activeJourneyRouteLabel, activeJourneyNextEntry,
   journeyTrips, launchSparkles, launchThemeBurst, loadCheckins,
   loadCloudData, loadCustomSecretCodes, loadDailyState, loadJourneyTrips,
   loadMeetingChecklist, loadMeetingMoments, loadMemoryPhotos, loadMoodHistory,

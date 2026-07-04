@@ -229,6 +229,7 @@
 }
 
 .app-shell.theme-mint .travel-calendar-grid button.active,
+.app-shell.theme-mint .travel-day-tab.active,
 .app-shell.theme-mint .travel-event.done {
   background: rgba(134, 212, 189, 0.18);
 }
@@ -428,18 +429,27 @@
 .app-shell.theme-night .wish-list article,
 .app-shell.theme-night .meeting-moment,
 .app-shell.theme-night .travel-trip-row select,
+.app-shell.theme-night .travel-title-group,
+.app-shell.theme-night .travel-live-summary,
+.app-shell.theme-night .travel-control-strip,
+.app-shell.theme-night .travel-control-strip select,
 .app-shell.theme-night .travel-mode-switch,
 .app-shell.theme-night .travel-mode-switch button.active,
 .app-shell.theme-night .travel-stat-grid article,
 .app-shell.theme-night .travel-calendar-card,
 .app-shell.theme-night .travel-calendar-grid button,
 .app-shell.theme-night .travel-day-panel,
+.app-shell.theme-night .travel-day-rail,
+.app-shell.theme-night .travel-day-tab,
+.app-shell.theme-night .travel-day-workspace,
 .app-shell.theme-night .travel-day-fields input,
 .app-shell.theme-night .travel-event,
 .app-shell.theme-night .travel-event-time input,
 .app-shell.theme-night .travel-event-body input,
 .app-shell.theme-night .travel-event-body textarea,
 .app-shell.theme-night .travel-import-panel,
+.app-shell.theme-night .travel-import-side,
+.app-shell.theme-night .travel-import-side input,
 .app-shell.theme-night .travel-import-textarea,
 .app-shell.theme-night .travel-create-row input,
 .app-shell.theme-night .timeline-card,
@@ -476,6 +486,7 @@
 .app-shell.theme-night .wish-list article.done,
 .app-shell.theme-night .meeting-moment.done,
 .app-shell.theme-night .travel-calendar-grid button.active,
+.app-shell.theme-night .travel-day-tab.active,
 .app-shell.theme-night .travel-event.done,
 .app-shell.theme-night .suitcase-item.packed,
 .app-shell.theme-night .meeting-item.done {
@@ -492,9 +503,13 @@
 .app-shell.theme-night .import-preview p,
 .app-shell.theme-night .wish-list p,
 .app-shell.theme-night .travel-hero p,
+.app-shell.theme-night .travel-title-group p,
+.app-shell.theme-night .travel-live-summary dd,
 .app-shell.theme-night .travel-import-help,
 .app-shell.theme-night .travel-stat-grid strong,
 .app-shell.theme-night .travel-calendar-head strong,
+.app-shell.theme-night .travel-rail-head strong,
+.app-shell.theme-night .travel-day-tab strong,
 .app-shell.theme-night .travel-day-panel-head h3,
 .app-shell.theme-night .travel-event-time input,
 .app-shell.theme-night .travel-event-body input,
@@ -550,6 +565,7 @@
 
 .app-shell.theme-night .travel-calendar-grid i,
 .app-shell.theme-night .travel-calendar-head small,
+.app-shell.theme-night .travel-day-tab.active small,
 .app-shell.theme-night .travel-day-panel-head > span {
   background: rgba(143, 211, 224, 0.14);
   color: var(--night-text);

@@ -315,15 +315,38 @@
 .period-calendar-grid article {
   position: relative;
   display: grid;
-  grid-template-rows: 13px 18px 14px;
+  grid-template-rows: 14px 13px 18px 14px;
   align-items: center;
   justify-items: center;
   min-width: 0;
-  min-height: 58px;
+  min-height: 72px;
   padding: 6px 3px;
   border: 1px solid var(--period-line);
   border-radius: 14px;
   background: var(--period-panel);
+}
+
+.period-calendar-month {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  max-width: 100%;
+  height: 14px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--period-accent-3) 28%, var(--period-bg-strong));
+  color: var(--period-ink);
+  font-size: 0.54rem;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.period-calendar-month.empty {
+  background: transparent;
+  color: transparent;
 }
 
 .period-calendar-grid span {
@@ -368,12 +391,16 @@
 .period-calendar-grid .is-ovulation::after {
   position: absolute;
   right: 5px;
-  top: 5px;
+  top: 6px;
   width: 7px;
   height: 7px;
   border-radius: 999px;
   background: var(--period-accent-2);
   content: "";
+}
+
+.period-calendar-grid .is-month-start {
+  border-left: 3px solid color-mix(in srgb, var(--period-accent-3) 76%, transparent);
 }
 
 .period-calendar-grid .is-today {
@@ -881,10 +908,17 @@
   }
 
   .period-calendar-grid article {
-    grid-template-rows: 11px 17px 12px;
-    min-height: 51px;
+    grid-template-rows: 13px 11px 17px 12px;
+    min-height: 65px;
     padding: 5px 2px;
     border-radius: 11px;
+  }
+
+  .period-calendar-month {
+    min-width: 24px;
+    height: 13px;
+    padding: 0 4px;
+    font-size: 0.48rem;
   }
 
   .period-calendar-grid span {

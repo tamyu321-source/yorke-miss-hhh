@@ -53,11 +53,15 @@
   .photo-grid,
   .data-actions,
   .travel-trip-row,
+  .travel-control-strip,
+  .travel-trip-actions,
   .travel-import-actions,
   .travel-create-row,
   .travel-actions,
+  .travel-day-toolbar,
   .travel-day-fields,
   .travel-event-meta,
+  .travel-import-grid,
   .summary-grid,
   .settings-grid,
   .theme-picker,
@@ -67,6 +71,8 @@
   }
 
   .travel-hero,
+  .travel-command-bar,
+  .travel-live-summary,
   .travel-event {
     grid-template-columns: 1fr;
   }
@@ -93,8 +99,15 @@
   }
 
   .travel-event-time {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1fr);
+    grid-template-rows: auto;
     align-items: center;
+  }
+
+  .travel-event-time span {
+    width: 22px;
+    height: 2px;
+    min-height: 2px;
   }
 
   .travel-event-time::after {
@@ -102,7 +115,7 @@
   }
 
   .travel-remove-entry {
-    justify-self: stretch;
+    justify-self: end;
   }
 
   .arrival-mode-section,

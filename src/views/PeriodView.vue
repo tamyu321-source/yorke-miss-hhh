@@ -74,6 +74,9 @@ export default createContextViewComponent('PeriodView');
 
     <div class="period-calendar-grid" :class="{ 'is-private': periodPrivacyMode }">
       <article v-for="day in professionalPeriodCalendarDays" :key="day.key" :class="day.classes">
+        <em class="period-calendar-month" :class="{ empty: periodPrivacyMode || !day.monthLabel }" aria-hidden="true">
+          {{ periodPrivacyMode ? '' : day.monthLabel }}
+        </em>
         <span>{{ day.weekday }}</span>
         <strong>{{ periodPrivacyMode ? '•' : day.dayNumber }}</strong>
         <small>{{ periodPrivacyMode ? '' : day.label }}</small>
