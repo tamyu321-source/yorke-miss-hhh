@@ -26,7 +26,7 @@ export default createContextViewComponent('PeriodView');
 
     <div class="period-hero-actions">
       <button class="period-privacy-toggle" :class="{ active: periodPrivacyMode }" type="button" @click="togglePeriodPrivacyMode">
-        {{ periodPrivacyMode ? '顯示細節' : '隱私模式' }}
+        {{ periodPrivacyMode ? '顯示日期' : '隱藏日期' }}
       </button>
     </div>
 
@@ -65,9 +65,10 @@ export default createContextViewComponent('PeriodView');
       <span class="date-pill">信心 {{ periodConfidenceLabel }}</span>
     </div>
 
-    <div class="period-calendar-tools" aria-label="切換週期視圖">
+    <div class="period-calendar-tools" :class="{ 'has-restore': periodPrivacyMode }" aria-label="切換週期視圖">
       <button class="ghost-button" type="button" aria-label="查看前四週" @click="shiftPeriodCalendar(-1)">前</button>
-      <span>{{ periodPrivacyMode ? '日期已隱藏' : periodCalendarRangeLabel }}</span>
+      <span :class="{ 'is-private': periodPrivacyMode }">{{ periodPrivacyMode ? '日期已隱藏' : periodCalendarRangeLabel }}</span>
+      <button v-if="periodPrivacyMode" class="ghost-button period-calendar-restore" type="button" @click="togglePeriodPrivacyMode">顯示日期</button>
       <button class="ghost-button" type="button" @click="resetPeriodCalendar">今天</button>
       <button class="ghost-button" type="button" aria-label="查看後四週" @click="shiftPeriodCalendar(1)">後</button>
     </div>

@@ -330,6 +330,19 @@ const flightContentLabels: Record<FlightContentZone, string> = {
   surface: '頁面空域'
 };
 
+const MEMORY_PHOTO_LIMIT = 8;
+const MEMORY_PHOTO_UPLOAD_LIMIT = 4;
+const PHOTO_WALL_LAYOUT = [
+  { x: 38, y: 42, w: 260, h: 318 },
+  { x: 340, y: 24, w: 210, h: 264 },
+  { x: 612, y: 64, w: 248, h: 304 },
+  { x: 150, y: 380, w: 236, h: 286 },
+  { x: 442, y: 328, w: 288, h: 342 },
+  { x: 760, y: 368, w: 210, h: 264 },
+  { x: 930, y: 120, w: 252, h: 304 },
+  { x: 1068, y: 442, w: 230, h: 282 }
+];
+
 const weatherKindPriority: Record<MapWeatherKind, number> = {
   storm: 6,
   rain: 5,
@@ -442,7 +455,15 @@ const mapWeather = ref<Record<WeatherStationId, MapWeatherSnapshot>>(createFallb
 const secretCodeInput = ref('');
 const secretCodeUnlocked = ref(false);
 const secretCodeMessage = ref('');
+const secretCodeHelpVisible = ref(false);
 const memoryPhotos = ref<MemoryPhoto[]>([]);
+const selectedMemoryPhotoId = ref('');
+const memoryPhotoMessage = ref('');
+const memoryPhotoBusy = ref(false);
+const photoViewerOpen = ref(false);
+const photoViewerScale = ref(1);
+const photoViewerOffset = ref({ x: 0, y: 0 });
+const photoViewerDragging = ref(false);
 const memoryCapsuleNotes = ref<MemoryCapsuleNote[]>([]);
 const editingCapsuleIndex = ref<number | null>(null);
 const capsuleEditText = ref('');
@@ -546,6 +567,9 @@ let lastCloudSnapshot = '';
 let loadingCloudSnapshot = false;
 let cloudLoadRequestId = 0;
 let localCloudFallbackRequested = false;
+const photoViewerPointers = new Map<number, { x: number; y: number }>();
+let photoViewerLastPointer: { x: number; y: number } | null = null;
+let photoViewerPinchStart: { distance: number; scale: number } | null = null;
 let audioContext: AudioContext | null = null;
 let bgmGain: GainNode | null = null;
 let bgmFilter: BiquadFilterNode | null = null;
@@ -921,12 +945,47 @@ const backgroundBeams = computed(() =>
   }))
 );
 const secretCodeList = computed(() => [...defaultSecretCodes, ...customSecretCodes.value]);
+const selectedMemoryPhoto = computed(() =>
+  memoryPhotos.value.find((photo) => photo.id === selectedMemoryPhotoId.value) ?? memoryPhotos.value[0] ?? null
+);
+const selectedMemoryPhotoIndex = computed(() => {
+  if (!selectedMemoryPhoto.value) return 0;
+  return memoryPhotos.value.findIndex((photo) => photo.id === selectedMemoryPhoto.value?.id) + 1;
+});
+const selectedMemoryPhotoMeta = computed(() =>
+  selectedMemoryPhoto.value
+    ? `${selectedMemoryPhotoIndex.value} / ${memoryPhotos.value.length} 張`
+    : `0 / ${MEMORY_PHOTO_LIMIT} 張`
+);
+const memoryPhotoCountLabel = computed(() => `${memoryPhotos.value.length} / ${MEMORY_PHOTO_LIMIT} 張`);
+const photoViewerTransform = computed<CSSProperties>(() => ({
+  transform: `translate3d(${photoViewerOffset.value.x}px, ${photoViewerOffset.value.y}px, 0) scale(${photoViewerScale.value})`
+}));
 const photoFilmstrip = computed(() =>
   memoryPhotos.value.map((photo, index) => ({
     ...photo,
-    dateLabel: formatMonthDay(addDays(configuredStartDay.value, index)),
-    rotate: `${(index % 5) - 2}deg`
+    dateLabel: getMemoryPhotoDateLabel(photo, index),
+    rotate: `${[-4, 2.5, -1.5, 3.5, -3, 1.5, 4, -2][index % 8]}deg`,
+    selected: photo.id === selectedMemoryPhoto.value?.id
   }))
+);
+const photoWallItems = computed(() =>
+  memoryPhotos.value.map((photo, index) => {
+    const layout = PHOTO_WALL_LAYOUT[index % PHOTO_WALL_LAYOUT.length];
+    const rotate = `${[-4, 2.5, -1.5, 3.5, -3, 1.5, 4, -2][index % 8]}deg`;
+    return {
+      ...photo,
+      dateLabel: getMemoryPhotoDateLabel(photo, index),
+      selected: photo.id === selectedMemoryPhoto.value?.id,
+      wallStyle: {
+        '--photo-x': `${layout.x}px`,
+        '--photo-y': `${layout.y}px`,
+        '--photo-w': `${layout.w}px`,
+        '--photo-h': `${layout.h}px`,
+        '--photo-rotate': rotate
+      } as CSSProperties
+    };
+  })
 );
 const displayBoyName = computed(() => settings.value.boyName.trim() || BOY_NAME);
 const displayGirlName = computed(() => settings.value.girlName.trim() || GIRL_NAME);
@@ -2465,6 +2524,7 @@ function unlockSecretCode() {
     return;
   }
   secretCodeUnlocked.value = true;
+  secretCodeHelpVisible.value = false;
   localStorage.setItem(storageKey('secret-code'), 'open');
   secretCodeInput.value = '';
   secretCodeMessage.value = '暗號通過，雙人私密區已開啟。';
@@ -2482,9 +2542,33 @@ function loadSecretCode() {
 function lockSecretCode() {
   secretCodeUnlocked.value = false;
   secretCodeInput.value = '';
+  secretCodeHelpVisible.value = false;
   secretCodeMessage.value = '已重新上鎖，卡片收回信封。';
   cancelHiddenCardEdit();
   localStorage.removeItem(storageKey('secret-code'));
+  gentleVibrate(10);
+}
+
+function toggleSecretCodeHelp() {
+  secretCodeHelpVisible.value = !secretCodeHelpVisible.value;
+  secretCodeMessage.value = secretCodeHelpVisible.value
+    ? '可以先用預設暗號打開，或把自訂暗號清掉後重新設定。'
+    : '';
+}
+
+function useSecretCodeHint(code: string) {
+  secretCodeInput.value = code;
+  secretCodeMessage.value = '已填入這組暗號，按「打開信封」就可以確認。';
+  gentleVibrate(6);
+}
+
+function resetCustomSecretCodes() {
+  customSecretCodes.value = [];
+  localStorage.removeItem(storageKey('custom-secret-codes'));
+  secretCodeInput.value = defaultSecretCodes[0] ?? '';
+  secretCodeHelpVisible.value = true;
+  secretCodeMessage.value = '已恢復預設暗號；打開信封後可以再新增新的雙人暗號。';
+  requestCloudSync('memories');
   gentleVibrate(10);
 }
 
@@ -2646,29 +2730,211 @@ function clearDailyAnswer() {
   requestCloudSync('today');
 }
 
-async function addMemoryPhotos(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []).slice(0, 4);
-  if (!files.length) return;
-
-  const photos = (await Promise.all(files.map((file) => createMemoryPhoto(file)))).filter(
-    (photo): photo is MemoryPhoto => Boolean(photo)
-  );
-  if (!photos.length) return;
-
-  memoryPhotos.value = [...photos, ...memoryPhotos.value].slice(0, 8);
-  await saveMemoryPhotos();
-  launchThemeBurst();
-  input.value = '';
-  gentleVibrate(10);
+function getMemoryPhotoDateLabel(photo: MemoryPhoto, index: number) {
+  const timestamp = Number(photo.id.split('-')[0]);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    return formatMonthDay(new Date(timestamp));
+  }
+  return `第 ${index + 1} 張`;
 }
 
-function removeMemoryPhoto(id: string) {
-  memoryPhotos.value = memoryPhotos.value.filter((photo) => photo.id !== id);
-  saveMemoryPhotos();
+function selectMemoryPhoto(id: string) {
+  if (!memoryPhotos.value.some((photo) => photo.id === id)) return;
+  selectedMemoryPhotoId.value = id;
+}
+
+function openMemoryPhotoViewer(id: string) {
+  selectMemoryPhoto(id);
+  resetMemoryPhotoViewer();
+  photoViewerOpen.value = true;
+  gentleVibrate(8);
+}
+
+function closeMemoryPhotoViewer() {
+  photoViewerOpen.value = false;
+  resetMemoryPhotoViewer();
+}
+
+function resetMemoryPhotoViewer() {
+  photoViewerScale.value = 1;
+  photoViewerOffset.value = { x: 0, y: 0 };
+  photoViewerDragging.value = false;
+  photoViewerPointers.clear();
+  photoViewerLastPointer = null;
+  photoViewerPinchStart = null;
+}
+
+function zoomMemoryPhotoViewer(delta: number) {
+  const nextScale = clamp(Math.round((photoViewerScale.value + delta) * 100) / 100, 0.7, 5);
+  photoViewerScale.value = nextScale;
+  if (nextScale <= 1) {
+    photoViewerOffset.value = { x: 0, y: 0 };
+  }
+}
+
+function handleMemoryPhotoViewerWheel(event: WheelEvent) {
+  event.preventDefault();
+  zoomMemoryPhotoViewer(event.deltaY > 0 ? -0.18 : 0.18);
+}
+
+function startMemoryPhotoViewerGesture(event: PointerEvent) {
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  photoViewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (photoViewerPointers.size === 1) {
+    photoViewerDragging.value = true;
+    photoViewerLastPointer = { x: event.clientX, y: event.clientY };
+    photoViewerPinchStart = null;
+    return;
+  }
+
+  if (photoViewerPointers.size === 2) {
+    photoViewerDragging.value = false;
+    photoViewerLastPointer = null;
+    photoViewerPinchStart = {
+      distance: getMemoryPhotoGestureDistance(),
+      scale: photoViewerScale.value
+    };
+  }
+}
+
+function moveMemoryPhotoViewerGesture(event: PointerEvent) {
+  if (!photoViewerPointers.has(event.pointerId)) return;
+  photoViewerPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (photoViewerPointers.size >= 2 && photoViewerPinchStart) {
+    const distance = getMemoryPhotoGestureDistance();
+    if (distance > 0 && photoViewerPinchStart.distance > 0) {
+      photoViewerScale.value = clamp(
+        Math.round(photoViewerPinchStart.scale * (distance / photoViewerPinchStart.distance) * 100) / 100,
+        0.7,
+        5
+      );
+    }
+    return;
+  }
+
+  if (!photoViewerDragging.value || !photoViewerLastPointer) {
+    photoViewerLastPointer = { x: event.clientX, y: event.clientY };
+    return;
+  }
+
+  const dx = event.clientX - photoViewerLastPointer.x;
+  const dy = event.clientY - photoViewerLastPointer.y;
+  photoViewerOffset.value = {
+    x: photoViewerOffset.value.x + dx,
+    y: photoViewerOffset.value.y + dy
+  };
+  photoViewerLastPointer = { x: event.clientX, y: event.clientY };
+}
+
+function endMemoryPhotoViewerGesture(event: PointerEvent) {
+  const target = event.currentTarget as HTMLElement | null;
+  target?.releasePointerCapture?.(event.pointerId);
+  photoViewerPointers.delete(event.pointerId);
+  photoViewerPinchStart = null;
+
+  const remainingPointer = [...photoViewerPointers.values()][0];
+  if (remainingPointer) {
+    photoViewerDragging.value = true;
+    photoViewerLastPointer = { ...remainingPointer };
+    return;
+  }
+
+  photoViewerDragging.value = false;
+  photoViewerLastPointer = null;
+}
+
+function getMemoryPhotoGestureDistance() {
+  const points = [...photoViewerPointers.values()];
+  if (points.length < 2) return 0;
+  return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+}
+
+function saveSelectedMemoryPhotoToDevice() {
+  const photo = selectedMemoryPhoto.value;
+  if (!photo) return;
+  const link = document.createElement('a');
+  link.href = photo.dataUrl;
+  link.download = normalizeMemoryPhotoDownloadName(photo.name);
+  link.click();
+  memoryPhotoMessage.value = `已準備儲存「${photo.name || '照片'}」。`;
+}
+
+function normalizeMemoryPhotoDownloadName(name: string) {
+  const fallback = `回憶照片-${dateKey.value}.jpg`;
+  const cleaned = name.trim().replace(/[\\/:*?"<>|]/g, '-');
+  return cleaned || fallback;
+}
+
+async function addMemoryPhotos(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const pickedFiles = Array.from(input.files ?? []);
+  const files = pickedFiles.slice(0, MEMORY_PHOTO_UPLOAD_LIMIT);
+  if (!files.length) return;
+
+  const previousPhotos = [...memoryPhotos.value];
+  const previousSelectedId = selectedMemoryPhotoId.value;
+  memoryPhotoBusy.value = true;
+  memoryPhotoMessage.value = `正在整理 ${files.length} 張照片...`;
+
+  try {
+    const photos = (await Promise.all(files.map((file) => createMemoryPhoto(file)))).filter(
+      (photo): photo is MemoryPhoto => Boolean(photo)
+    );
+    if (!photos.length) {
+      memoryPhotoMessage.value = '沒有讀到可儲存的照片，換一張再試試。';
+      return;
+    }
+
+    memoryPhotos.value = [...photos, ...memoryPhotos.value].slice(0, MEMORY_PHOTO_LIMIT);
+    selectedMemoryPhotoId.value = photos[0].id;
+    await saveMemoryPhotos();
+    const limitNote = pickedFiles.length > files.length ? `一次先處理前 ${MEMORY_PHOTO_UPLOAD_LIMIT} 張。` : '';
+    const keepNote = previousPhotos.length + photos.length > MEMORY_PHOTO_LIMIT ? `已保留最新 ${MEMORY_PHOTO_LIMIT} 張。` : '';
+    memoryPhotoMessage.value = [`已儲存 ${photos.length} 張照片。`, limitNote, keepNote].filter(Boolean).join(' ');
+    launchThemeBurst();
+    gentleVibrate(10);
+  } catch {
+    memoryPhotos.value = previousPhotos;
+    selectedMemoryPhotoId.value = previousSelectedId;
+    memoryPhotoMessage.value = '照片暫時沒有儲存成功，請稍後再試。';
+  } finally {
+    memoryPhotoBusy.value = false;
+    input.value = '';
+  }
+}
+
+async function removeMemoryPhoto(id: string) {
+  const photo = memoryPhotos.value.find((item) => item.id === id);
+  if (!photo) return;
+
+  const previousPhotos = [...memoryPhotos.value];
+  const previousSelectedId = selectedMemoryPhotoId.value;
+  memoryPhotos.value = memoryPhotos.value.filter((item) => item.id !== id);
+  if (selectedMemoryPhotoId.value === id) {
+    selectedMemoryPhotoId.value = memoryPhotos.value[0]?.id ?? '';
+  }
+  if (!memoryPhotos.value.length) {
+    closeMemoryPhotoViewer();
+  }
+
+  try {
+    await saveMemoryPhotos();
+    memoryPhotoMessage.value = `已移除「${photo.name || '照片'}」。`;
+    gentleVibrate(8);
+  } catch {
+    memoryPhotos.value = previousPhotos;
+    selectedMemoryPhotoId.value = previousSelectedId;
+    memoryPhotoMessage.value = '刪除沒有儲存成功，已先還原照片。';
+  }
 }
 
 async function saveMemoryPhotos() {
+  if (!memoryPhotos.value.some((photo) => photo.id === selectedMemoryPhotoId.value)) {
+    selectedMemoryPhotoId.value = memoryPhotos.value[0]?.id ?? '';
+  }
   await savePhotos(memoryPhotos.value);
   requestCloudSync('memories');
 }
@@ -2690,6 +2956,7 @@ async function loadMemoryPhotos() {
   }
 
   memoryPhotos.value = await loadStoredPhotos(legacyPhotos);
+  selectedMemoryPhotoId.value = memoryPhotos.value[0]?.id ?? '';
   if (legacyStored) localStorage.removeItem(storageKey('memory-photos'));
 }
 
@@ -5016,7 +5283,7 @@ provide(appViewContextKey, {
   completeTodayRitual, configuredStartDate, configuredStartDay, copyDailyReceipt,
   countdown, createBlankJourneyTrip, currentDayIndex, customSecretCodes,
   dailyAnswer, dailyMessage, dailyQuestions, dailyReceipt,
-  dateKey, daysUntilMeeting, dismissOnboarding, dismissUpdateToast,
+  dateKey, daysUntilMeeting, defaultSecretCodes, dismissOnboarding, dismissUpdateToast,
   displayBoyName, displayGirlName, draftStartDate, draftTargetDate,
   editingPeriodRecordId,
   drawFortune, editHiddenCard, editingCapsuleIndex, editingHiddenCardId, endPlaneDrag, enterUnlockedApp, exportActiveJourneyCalendar,
@@ -5041,7 +5308,8 @@ provide(appViewContextKey, {
   loadSecretCode, loadSettings, loadSuitcase, loadWishes,
   localDataMode, localPreviewMode, lockApp, lockSecretCode, mailSecret,
   meetingChecklist, meetingChecklistItems, meetingChecklistProgress, meetingMomentItems,
-  meetingMoments, meetingSummary, meetingSummaryLine, memoryCapsuleNotes, memoryPhotos,
+  meetingMoments, meetingSummary, meetingSummaryLine, memoryCapsuleNotes, memoryPhotoBusy,
+  memoryPhotoCountLabel, memoryPhotoMessage, memoryPhotos,
   milestoneFlash, moodBottleDots, moodHistory, moodOptions,
   movePlaneDrag, navIndicatorStyle, newPeriodCare, newPeriodEndDate,
   newPeriodFlow, newPeriodMoods, newPeriodNote, newPeriodPainLevel,
@@ -5050,7 +5318,8 @@ provide(appViewContextKey, {
   openingStars, openingThemeLabel, openThemeSettings, openTodayRitual,
   packingItems, parseJourneyRowsFromImage, parseJourneyRowsFromSpreadsheetFile, passwordBusy,
   passwordInput, passwordStatus, passwordSuccess, pendingImport,
-  pendingImportSummary, photoFilmstrip, planeDrag, planeStyle,
+  pendingImportSummary, photoFilmstrip, photoViewerDragging, photoViewerOpen, photoViewerScale,
+  photoViewerTransform, photoWallItems, planeDrag, planeStyle,
   activeRoutePercent, flightLandingEffect, flightMapClass, flightOverlayCityMarkers,
   flightOverlayClass, flightOverlayGridLines, flightOverlayIslandMarkers, flightOverlayLandMasses,
   flightOverlayRoutePath, flightOverlayViewBox, flightOverlayWaterWaveLines, flightOverlayWeatherMarkers, flightOverlayWeatherRegions, flightRoutePath,
@@ -5071,15 +5340,16 @@ provide(appViewContextKey, {
   radarScanned, rawDayIndex, refreshForUpdate, reloadPersistentState,
   removeCustomSecretCode, removeJourneyDay, removeJourneyEntry, removeJourneyTrip,
   removeHiddenCard, removeMemoryPhoto, removePeriodRecord, removeWish, requestCloudSync, requestFinishOpening,
-  resetPeriodCalendar,
+  resetCustomSecretCodes, resetMemoryPhotoViewer, resetPeriodCalendar,
   resetSettings, resetToday, restoreSavedCloudSession, revealSecret,
   ritualComplete, ritualOpened, ritualProgress, ritualSteps,
   routeFillStyle, saveCapsuleNote, saveDailyAnswer, saveDailyMessage, saveHiddenCard, savedMessageLine,
   saveJourneyTrips, saveMemoryPhotos, saveSettings, saveWishes,
-  scanRadar, sceneStyle, sceneTilt, secretCodeInput, secretCodeMessage,
+  scanRadar, sceneStyle, sceneTilt, secretCodeHelpVisible, secretCodeInput, secretCodeMessage,
   secretCodeList, secretCodeUnlocked, secretMailed, secretPressing,
-  secretRevealed, secretWhisper, selectedMood, selectedMoodId,
-  selectedMoodLine, selectJourneyDay, selectJourneyTrip, selectJourneyTripFromEvent,
+  secretRevealed, secretWhisper, saveSelectedMemoryPhotoToDevice, selectedMemoryPhoto, selectedMemoryPhotoId,
+  selectedMemoryPhotoMeta, selectedMood, selectedMoodId,
+  selectedMoodLine, selectJourneyDay, selectJourneyTrip, selectJourneyTripFromEvent, selectMemoryPhoto,
   selectMood, setSettingsUpdatedAt, settings, settingsDraft,
   shareCopied, showPasswordInstallHint, sparkles, startCloudSyncLoop,
   shiftPeriodCalendar, startDateLabel, startEditPeriodRecord, startOpeningSequence, startPlaneDrag, startPlaneMouseDrag, startSecretPress,
@@ -5090,12 +5360,15 @@ provide(appViewContextKey, {
   theaterLights, themeClass, themeOptions, themePreviewing,
   themeTransition, timelineEvents, timelineProgressStyle, todayJourney,
   todayNote, todayQuestion, todayStart, todayTask,
-  toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment, togglePeriodPrivacyMode, togglePeriodSelection,
+  toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment, togglePeriodPrivacyMode, togglePeriodSelection, toggleSecretCodeHelp,
   toggleSuitcaseItem, toggleTask, toggleWish, triggerMilestoneWave,
+  closeMemoryPhotoViewer, endMemoryPhotoViewerGesture, handleMemoryPhotoViewerWheel,
+  moveMemoryPhotoViewerGesture, openMemoryPhotoViewer, startMemoryPhotoViewerGesture,
   unlockApp, unlockedCount, unlockSecretCode, updateActiveJourneyTitle,
   updateAppThemeChrome, updateInstalledDisplayMode, updateJourneyDayField, updateJourneyEntryField,
   updateJourneyTrip, updateOnlineState, updateReady, updateSceneTilt,
-  useLocalDataForThisSession, visibleCapsules, visibleCapsulesDisplay, waitForPasswordSuccess,
+  useLocalDataForThisSession, useSecretCodeHint, visibleCapsules, visibleCapsulesDisplay, waitForPasswordSuccess,
+  zoomMemoryPhotoViewer,
   wishes
 });
 

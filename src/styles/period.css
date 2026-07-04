@@ -290,6 +290,10 @@
   align-items: center;
 }
 
+.period-calendar-tools.has-restore {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+
 .period-calendar-tools span {
   min-height: 36px;
   display: inline-flex;
@@ -304,6 +308,17 @@
   font-size: 0.78rem;
   font-weight: 950;
   text-align: center;
+}
+
+.period-calendar-tools span.is-private {
+  border-style: dashed;
+  color: var(--period-muted);
+}
+
+.period-calendar-restore {
+  border-color: color-mix(in srgb, var(--period-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--period-accent) 12%, var(--period-bg-strong));
+  color: var(--period-ink);
 }
 
 .period-calendar-grid {
@@ -891,6 +906,14 @@
   .period-calendar-tools {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     gap: 6px;
+  }
+
+  .period-calendar-tools.has-restore {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+
+  .period-calendar-tools.has-restore .period-calendar-restore {
+    grid-column: 1 / -1;
   }
 
   .period-calendar-tools .ghost-button {

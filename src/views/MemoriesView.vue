@@ -45,6 +45,21 @@ export default createContextViewComponent('MemoriesView');
           <input v-model="secretCodeInput" maxlength="16" placeholder="輸入你們約好的暗號" @keyup.enter="unlockSecretCode" />
           <button class="soft-button" type="button" @click="unlockSecretCode">打開信封</button>
         </div>
+        <div class="secret-code-help-actions">
+          <button class="ghost-button" type="button" @click="toggleSecretCodeHelp">
+            {{ secretCodeHelpVisible ? '收起提示' : '忘記暗號' }}
+          </button>
+          <button class="ghost-button" type="button" @click="resetCustomSecretCodes">恢復預設暗號</button>
+        </div>
+        <div v-if="secretCodeHelpVisible" class="secret-code-recovery">
+          <strong>預設暗號</strong>
+          <div class="secret-code-hint-list">
+            <button v-for="code in defaultSecretCodes" :key="code" type="button" @click="useSecretCodeHint(code)">
+              {{ code }}
+            </button>
+          </div>
+          <p>如果你後來改過又忘了，可以先恢復預設暗號；打開信封後再新增新的雙人暗號。</p>
+        </div>
         <p class="secret-code-status">{{ secretCodeMessage || '暗號通過後，才會看到隱藏卡片與暗號管理。' }}</p>
       </div>
 
@@ -65,7 +80,7 @@ export default createContextViewComponent('MemoriesView');
             <div>
               <button v-if="editingHiddenCardId" class="ghost-button" type="button" @click="cancelHiddenCardEdit">取消</button>
               <button class="soft-button" type="button" @click="saveHiddenCard">
-                {{ editingHiddenCardId ? '保存修改' : '新增卡片' }}
+                {{ editingHiddenCardId ? '儲存修改' : '新增卡片' }}
               </button>
             </div>
           </div>
@@ -107,35 +122,85 @@ export default createContextViewComponent('MemoriesView');
           <p class="section-kicker">照片回憶牆</p>
           <h2 id="photo-wall-title">把可以公開在本機的小畫面收起來</h2>
         </div>
+        <span class="date-pill">{{ memoryPhotoCountLabel }}</span>
       </div>
-      <label class="photo-upload">
-        <input type="file" accept="image/*" multiple @change="addMemoryPhotos" />
-        加入照片
-      </label>
-      <div v-if="photoFilmstrip.length" class="photo-filmstrip" aria-label="回憶膠卷">
-        <figure
-          v-for="photo in photoFilmstrip"
-          :key="`film-${photo.id}`"
-          :style="{ '--film-rotate': photo.rotate }"
-        >
-          <img :src="photo.dataUrl" :alt="photo.name" />
-          <figcaption>
-            <strong>{{ photo.dateLabel }}</strong>
-            <span>{{ photo.name }}</span>
-          </figcaption>
-        </figure>
+      <div class="photo-wall-actions">
+        <label class="photo-upload" :class="{ 'is-busy': memoryPhotoBusy }">
+          <input type="file" accept="image/*" multiple :disabled="memoryPhotoBusy" @change="addMemoryPhotos" />
+          {{ memoryPhotoBusy ? '整理中' : '加入照片' }}
+        </label>
+        <button v-if="memoryPhotos.length" class="ghost-button" type="button" @click="selectMemoryPhoto(memoryPhotos[0].id)">最新</button>
       </div>
-      <div v-if="memoryPhotos.length" class="photo-grid">
-        <figure v-for="photo in memoryPhotos" :key="photo.id">
-          <img :src="photo.dataUrl" :alt="photo.name" />
-          <figcaption>
-            <span>{{ photo.name }}</span>
-            <button type="button" @click="removeMemoryPhoto(photo.id)">移除</button>
-          </figcaption>
-        </figure>
+      <p v-if="memoryPhotoMessage" class="photo-status">{{ memoryPhotoMessage }}</p>
+      <div v-if="memoryPhotos.length" class="photo-wall-gallery">
+        <div class="photo-wall-canvas" aria-label="可滑動照片牆">
+          <div class="photo-wall-board" aria-label="照片牆">
+            <button
+              v-for="photo in photoWallItems"
+              :key="`wall-${photo.id}`"
+              class="photo-wall-card"
+              :class="{ active: photo.selected }"
+              :style="photo.wallStyle"
+              type="button"
+              @click="openMemoryPhotoViewer(photo.id)"
+            >
+              <span class="photo-wall-pin" aria-hidden="true"></span>
+              <img :src="photo.dataUrl" :alt="photo.name" />
+              <span class="photo-wall-caption">
+                <strong>{{ photo.dateLabel }}</strong>
+                <small>{{ photo.name }}</small>
+              </span>
+            </button>
+          </div>
+        </div>
+        <div v-if="selectedMemoryPhoto" class="photo-wall-detail">
+          <div>
+            <span>目前選取</span>
+            <strong>{{ selectedMemoryPhoto.name }}</strong>
+            <small>{{ selectedMemoryPhotoMeta }}</small>
+          </div>
+          <button class="ghost-button" type="button" @click="removeMemoryPhoto(selectedMemoryPhoto.id)">刪除這張</button>
+        </div>
       </div>
       <p v-else class="empty-photo-note">照片會先壓縮，再同步到回憶 API。</p>
     </section>
+
+    <div
+      v-if="photoViewerOpen && selectedMemoryPhoto"
+      class="photo-viewer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="照片檢視器"
+      @click.self="closeMemoryPhotoViewer"
+    >
+      <div class="photo-viewer-panel">
+        <div class="photo-viewer-bar">
+          <div>
+            <span>{{ selectedMemoryPhotoMeta }}</span>
+            <strong>{{ selectedMemoryPhoto.name }}</strong>
+          </div>
+          <button class="photo-viewer-close" type="button" aria-label="關閉照片檢視器" @click="closeMemoryPhotoViewer">×</button>
+        </div>
+        <div
+          class="photo-viewer-stage"
+          :class="{ dragging: photoViewerDragging }"
+          @wheel="handleMemoryPhotoViewerWheel"
+          @pointerdown="startMemoryPhotoViewerGesture"
+          @pointermove="moveMemoryPhotoViewerGesture"
+          @pointerup="endMemoryPhotoViewerGesture"
+          @pointercancel="endMemoryPhotoViewerGesture"
+        >
+          <img :src="selectedMemoryPhoto.dataUrl" :alt="selectedMemoryPhoto.name" :style="photoViewerTransform" draggable="false" />
+        </div>
+        <div class="photo-viewer-toolbar" aria-label="照片檢視工具">
+          <button type="button" @click="zoomMemoryPhotoViewer(-0.25)">縮小</button>
+          <span>{{ Math.round(photoViewerScale * 100) }}%</span>
+          <button type="button" @click="zoomMemoryPhotoViewer(0.25)">放大</button>
+          <button type="button" @click="resetMemoryPhotoViewer">重設</button>
+          <button type="button" @click="saveSelectedMemoryPhotoToDevice">儲存</button>
+        </div>
+      </div>
+    </div>
 
     <section v-show="activeTab === 'memories'" class="wish-section" aria-labelledby="wish-title">
       <div class="section-title-row">
@@ -201,7 +266,7 @@ export default createContextViewComponent('MemoriesView');
               <span>{{ capsuleEditText.length }} / 160</span>
               <div>
                 <button class="ghost-button" type="button" @click="cancelEditCapsule">取消</button>
-                <button class="soft-button" type="button" @click="saveCapsuleNote">保存</button>
+                <button class="soft-button" type="button" @click="saveCapsuleNote">儲存</button>
               </div>
             </div>
           </div>

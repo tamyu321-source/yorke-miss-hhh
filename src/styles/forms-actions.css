@@ -197,6 +197,55 @@
   margin-top: 0;
 }
 
+.secret-code-help-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secret-code-help-actions .ghost-button {
+  min-height: 36px;
+}
+
+.secret-code-recovery {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed rgba(117, 183, 197, 0.42);
+  border-radius: 16px;
+  background: rgba(234, 247, 247, 0.58);
+}
+
+.secret-code-recovery strong {
+  color: #243047;
+  font-weight: 950;
+}
+
+.secret-code-recovery p {
+  margin: 0;
+  color: #637084;
+  font-size: 0.88rem;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
+.secret-code-hint-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secret-code-hint-list button {
+  min-height: 34px;
+  border: 1px solid rgba(65, 124, 115, 0.16);
+  border-radius: 999px;
+  background: #fffaf7;
+  color: #417c73;
+  font-size: 0.82rem;
+  font-weight: 900;
+  padding: 0 12px;
+}
+
 .secret-code-status {
   margin: 0;
   color: #637084;
