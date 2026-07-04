@@ -131,18 +131,38 @@ export default createContextViewComponent('MemoriesView');
         </label>
         <button v-if="memoryPhotos.length" class="ghost-button" type="button" @click="selectMemoryPhoto(memoryPhotos[0].id)">最新</button>
       </div>
+      <div v-if="memoryPhotos.length" class="photo-wall-zoom-controls" aria-label="照片牆縮放">
+        <button type="button" @click="zoomPhotoWall(-0.2)">縮小</button>
+        <span>{{ photoWallZoomLabel }}</span>
+        <button type="button" @click="zoomPhotoWall(0.2)">放大</button>
+        <button type="button" @click="resetPhotoWallZoom">重設</button>
+      </div>
       <p v-if="memoryPhotoMessage" class="photo-status">{{ memoryPhotoMessage }}</p>
       <div v-if="memoryPhotos.length" class="photo-wall-gallery">
-        <div class="photo-wall-canvas" aria-label="可滑動照片牆">
-          <div class="photo-wall-board" aria-label="照片牆">
+        <div
+          class="photo-wall-canvas"
+          :class="{ dragging: photoWallDragging }"
+          aria-label="可滑動照片牆"
+          @wheel="handlePhotoWallWheel"
+          @pointerdown="startPhotoWallGesture"
+          @pointermove="movePhotoWallGesture"
+          @pointerup="endPhotoWallGesture"
+          @pointercancel="endPhotoWallGesture"
+        >
+          <div class="photo-wall-zoom-surface" :style="photoWallSurfaceStyle">
+            <div class="photo-wall-board" :style="photoWallBoardStyle" aria-label="照片牆">
             <button
               v-for="photo in photoWallItems"
               :key="`wall-${photo.id}`"
               class="photo-wall-card"
-              :class="{ active: photo.selected }"
+              :class="{ active: photo.selected, dragging: photo.dragging }"
               :style="photo.wallStyle"
               type="button"
-              @click="openMemoryPhotoViewer(photo.id)"
+              @pointerdown.stop="startPhotoWallCardDrag(photo.id, $event)"
+              @pointermove.stop="movePhotoWallCardDrag(photo.id, $event)"
+              @pointerup.stop="endPhotoWallCardDrag(photo.id, $event)"
+              @pointercancel.stop="endPhotoWallCardDrag(photo.id, $event)"
+              @click="openMemoryPhotoFromWall(photo.id)"
             >
               <span class="photo-wall-pin" aria-hidden="true"></span>
               <img :src="photo.dataUrl" :alt="photo.name" />
@@ -151,6 +171,7 @@ export default createContextViewComponent('MemoriesView');
                 <small>{{ photo.name }}</small>
               </span>
             </button>
+            </div>
           </div>
         </div>
         <div v-if="selectedMemoryPhoto" class="photo-wall-detail">

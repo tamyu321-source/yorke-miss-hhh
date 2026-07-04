@@ -143,12 +143,16 @@
   }
 
   .photo-wall-board {
-    width: 1340px;
-    height: 740px;
+    width: 720px;
+    height: 900px;
   }
 
   .photo-wall-canvas {
-    max-height: 430px;
+    max-height: 500px;
+  }
+
+  .photo-wall-zoom-controls button {
+    min-width: 68px;
   }
 
   .photo-viewer {

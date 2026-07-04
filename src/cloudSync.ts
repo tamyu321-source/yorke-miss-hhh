@@ -70,7 +70,16 @@ const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
     'mood-history'
   ],
   prepare: ['suitcase', 'meeting-checklist'],
-  memories: ['meeting-moments', 'capsule-notes', 'flipped-capsules', 'hidden-cards', 'secret-code', 'custom-secret-codes'],
+  memories: [
+    'meeting-moments',
+    'capsule-notes',
+    'flipped-capsules',
+    'hidden-cards',
+    'secret-code',
+    'custom-secret-codes',
+    'memory-photo-layouts',
+    'memory-photo-wall-scale'
+  ],
   wishes: ['wishes'],
   period: ['period-records', 'period-privacy-mode'],
   journey: ['journey-trips', 'active-journey-trip']
@@ -181,7 +190,7 @@ function partitionCloudState(data: AppExportData): Record<CloudFeature, CloudFea
     payloads[classifyStorageKey(key)].localStorage[key] = value;
   });
 
-  payloads.memories.photos = data.photos;
+  payloads.memories.photos = [];
   return payloads;
 }
 

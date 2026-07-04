@@ -330,18 +330,33 @@ const flightContentLabels: Record<FlightContentZone, string> = {
   surface: '頁面空域'
 };
 
-const MEMORY_PHOTO_LIMIT = 8;
-const MEMORY_PHOTO_UPLOAD_LIMIT = 4;
-const PHOTO_WALL_LAYOUT = [
-  { x: 38, y: 42, w: 260, h: 318 },
-  { x: 340, y: 24, w: 210, h: 264 },
-  { x: 612, y: 64, w: 248, h: 304 },
-  { x: 150, y: 380, w: 236, h: 286 },
-  { x: 442, y: 328, w: 288, h: 342 },
-  { x: 760, y: 368, w: 210, h: 264 },
-  { x: 930, y: 120, w: 252, h: 304 },
-  { x: 1068, y: 442, w: 230, h: 282 }
-];
+const MEMORY_PHOTO_LIMIT = 24;
+const MEMORY_PHOTO_UPLOAD_LIMIT = 12;
+const DEFAULT_PHOTO_WALL_SCALE = 0.85;
+const PHOTO_WALL_BOARD_WIDTH = 720;
+const PHOTO_WALL_BOARD_HEIGHT = 900;
+const PHOTO_WALL_LAYOUT = Array.from({ length: MEMORY_PHOTO_LIMIT }, (_, index) => {
+  const column = index % 4;
+  const row = Math.floor(index / 4);
+  const widthPattern = [154, 136, 168, 146, 160, 140, 150, 156];
+  const heightPattern = [190, 166, 210, 178, 198, 170, 184, 202];
+  const xOffsetPattern = [0, 14, -8, 8];
+  const yOffsetPattern = [0, -12, 12, 5, -8, 10, -4, 7];
+
+  return {
+    x: 26 + column * 150 + xOffsetPattern[column],
+    y: 28 + row * 132 + yOffsetPattern[(index + row) % yOffsetPattern.length],
+    w: widthPattern[index % widthPattern.length],
+    h: heightPattern[index % heightPattern.length],
+    z: 2 + ((column * 3 + row * 2 + index) % 9)
+  };
+});
+
+type PhotoWallLayoutOverride = {
+  x: number;
+  y: number;
+  z: number;
+};
 
 const weatherKindPriority: Record<MapWeatherKind, number> = {
   storm: 6,
@@ -460,6 +475,10 @@ const memoryPhotos = ref<MemoryPhoto[]>([]);
 const selectedMemoryPhotoId = ref('');
 const memoryPhotoMessage = ref('');
 const memoryPhotoBusy = ref(false);
+const photoWallScale = ref(DEFAULT_PHOTO_WALL_SCALE);
+const photoWallDragging = ref(false);
+const photoWallDraggingPhotoId = ref('');
+const photoWallLayouts = ref<Record<string, PhotoWallLayoutOverride>>({});
 const photoViewerOpen = ref(false);
 const photoViewerScale = ref(1);
 const photoViewerOffset = ref({ x: 0, y: 0 });
@@ -570,6 +589,21 @@ let localCloudFallbackRequested = false;
 const photoViewerPointers = new Map<number, { x: number; y: number }>();
 let photoViewerLastPointer: { x: number; y: number } | null = null;
 let photoViewerPinchStart: { distance: number; scale: number } | null = null;
+const photoWallPointers = new Map<number, { x: number; y: number }>();
+let photoWallLastPointer: { x: number; y: number } | null = null;
+let photoWallPinchStart: { distance: number; scale: number } | null = null;
+let photoWallDidMove = false;
+let photoWallClickGuardUntil = 0;
+let photoWallPhotoDragStart: {
+  id: string;
+  startX: number;
+  startY: number;
+  layoutX: number;
+  layoutY: number;
+  layoutZ: number;
+  moved: boolean;
+} | null = null;
+let photoWallScaleSyncTimer: number | undefined;
 let audioContext: AudioContext | null = null;
 let bgmGain: GainNode | null = null;
 let bgmFilter: BiquadFilterNode | null = null;
@@ -958,6 +992,14 @@ const selectedMemoryPhotoMeta = computed(() =>
     : `0 / ${MEMORY_PHOTO_LIMIT} 張`
 );
 const memoryPhotoCountLabel = computed(() => `${memoryPhotos.value.length} / ${MEMORY_PHOTO_LIMIT} 張`);
+const photoWallZoomLabel = computed(() => `${Math.round(photoWallScale.value * 100)}%`);
+const photoWallSurfaceStyle = computed<CSSProperties>(() => ({
+  width: `${Math.round(PHOTO_WALL_BOARD_WIDTH * photoWallScale.value)}px`,
+  height: `${Math.round(PHOTO_WALL_BOARD_HEIGHT * photoWallScale.value)}px`
+}));
+const photoWallBoardStyle = computed<CSSProperties>(() => ({
+  transform: `scale(${photoWallScale.value})`
+}));
 const photoViewerTransform = computed<CSSProperties>(() => ({
   transform: `translate3d(${photoViewerOffset.value.x}px, ${photoViewerOffset.value.y}px, 0) scale(${photoViewerScale.value})`
 }));
@@ -972,17 +1014,20 @@ const photoFilmstrip = computed(() =>
 const photoWallItems = computed(() =>
   memoryPhotos.value.map((photo, index) => {
     const layout = PHOTO_WALL_LAYOUT[index % PHOTO_WALL_LAYOUT.length];
-    const rotate = `${[-4, 2.5, -1.5, 3.5, -3, 1.5, 4, -2][index % 8]}deg`;
+    const customLayout = photoWallLayouts.value[photo.id];
+    const rotate = `${[-6, 3, -2.5, 5, -4, 2.5, 6, -3.5, 4, -5, 2, -1.5][index % 12]}deg`;
     return {
       ...photo,
       dateLabel: getMemoryPhotoDateLabel(photo, index),
       selected: photo.id === selectedMemoryPhoto.value?.id,
+      dragging: photo.id === photoWallDraggingPhotoId.value,
       wallStyle: {
-        '--photo-x': `${layout.x}px`,
-        '--photo-y': `${layout.y}px`,
+        '--photo-x': `${customLayout?.x ?? layout.x}px`,
+        '--photo-y': `${customLayout?.y ?? layout.y}px`,
         '--photo-w': `${layout.w}px`,
         '--photo-h': `${layout.h}px`,
-        '--photo-rotate': rotate
+        '--photo-rotate': rotate,
+        '--photo-z': customLayout?.z ?? layout.z
       } as CSSProperties
     };
   })
@@ -1830,6 +1875,8 @@ onMounted(() => {
   loadMoodHistory();
   loadSecretCode();
   loadCustomSecretCodes();
+  loadPhotoWallScale();
+  loadMemoryPhotoLayouts();
   loadMemoryPhotos();
   loadMemoryCapsules();
   loadHiddenCards();
@@ -1877,6 +1924,7 @@ onUnmounted(() => {
   if (weatherTimer) window.clearInterval(weatherTimer);
   if (flightLandingTimer) window.clearTimeout(flightLandingTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
+  if (photoWallScaleSyncTimer) window.clearTimeout(photoWallScaleSyncTimer);
   stopBackgroundMusic();
   closeAudioContext();
   window.removeEventListener('online', updateOnlineState);
@@ -2738,9 +2786,251 @@ function getMemoryPhotoDateLabel(photo: MemoryPhoto, index: number) {
   return `第 ${index + 1} 張`;
 }
 
+function setPhotoWallScale(nextScale: number, scroller?: HTMLElement | null, anchor?: { x: number; y: number }) {
+  const previousScale = photoWallScale.value;
+  const clampedScale = clamp(Math.round(nextScale * 100) / 100, 0.08, 12);
+  if (clampedScale === previousScale) return;
+
+  const rect = scroller?.getBoundingClientRect();
+  const anchorX = scroller && rect ? (anchor?.x ?? rect.left + scroller.clientWidth / 2) - rect.left : 0;
+  const anchorY = scroller && rect ? (anchor?.y ?? rect.top + scroller.clientHeight / 2) - rect.top : 0;
+  const contentX = scroller ? scroller.scrollLeft + anchorX : 0;
+  const contentY = scroller ? scroller.scrollTop + anchorY : 0;
+  const ratio = clampedScale / previousScale;
+
+  photoWallScale.value = clampedScale;
+  savePhotoWallScale(false);
+
+  if (scroller) {
+    window.requestAnimationFrame(() => {
+      scroller.scrollLeft = contentX * ratio - anchorX;
+      scroller.scrollTop = contentY * ratio - anchorY;
+    });
+  }
+}
+
+function zoomPhotoWall(delta: number, event?: Event) {
+  const scroller = (event?.currentTarget as HTMLElement | null) ?? null;
+  setPhotoWallScale(photoWallScale.value + delta, scroller);
+  savePhotoWallScale();
+}
+
+function resetPhotoWallZoom() {
+  setPhotoWallScale(DEFAULT_PHOTO_WALL_SCALE);
+  savePhotoWallScale();
+}
+
+function handlePhotoWallWheel(event: WheelEvent) {
+  if (!event.ctrlKey) return;
+  event.preventDefault();
+  setPhotoWallScale(
+    photoWallScale.value + (event.deltaY > 0 ? -0.1 : 0.1),
+    event.currentTarget as HTMLElement,
+    { x: event.clientX, y: event.clientY }
+  );
+  savePhotoWallScale(false);
+  schedulePhotoWallScaleSync();
+}
+
+function startPhotoWallGesture(event: PointerEvent) {
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  photoWallPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (photoWallPointers.size === 1) {
+    photoWallDragging.value = true;
+    photoWallLastPointer = { x: event.clientX, y: event.clientY };
+    photoWallPinchStart = null;
+    photoWallDidMove = false;
+    return;
+  }
+
+  if (photoWallPointers.size === 2) {
+    photoWallDragging.value = true;
+    photoWallLastPointer = null;
+    photoWallPinchStart = {
+      distance: getPhotoWallGestureDistance(),
+      scale: photoWallScale.value
+    };
+    photoWallDidMove = true;
+    photoWallClickGuardUntil = Date.now() + 320;
+  }
+}
+
+function movePhotoWallGesture(event: PointerEvent) {
+  if (!photoWallPointers.has(event.pointerId)) return;
+  photoWallPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (photoWallPointers.size >= 2 && photoWallPinchStart) {
+    const distance = getPhotoWallGestureDistance();
+    if (distance > 0 && photoWallPinchStart.distance > 0) {
+      setPhotoWallScale(
+        photoWallPinchStart.scale * (distance / photoWallPinchStart.distance),
+        event.currentTarget as HTMLElement,
+        getPhotoWallGestureCenter()
+      );
+    }
+    photoWallDidMove = true;
+    photoWallClickGuardUntil = Date.now() + 320;
+    return;
+  }
+
+  if (!photoWallDragging.value || !photoWallLastPointer) {
+    photoWallLastPointer = { x: event.clientX, y: event.clientY };
+    return;
+  }
+
+  const dx = event.clientX - photoWallLastPointer.x;
+  const dy = event.clientY - photoWallLastPointer.y;
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+    const scroller = event.currentTarget as HTMLElement;
+    scroller.scrollLeft -= dx;
+    scroller.scrollTop -= dy;
+    photoWallDidMove = true;
+  }
+  photoWallLastPointer = { x: event.clientX, y: event.clientY };
+}
+
+function endPhotoWallGesture(event: PointerEvent) {
+  const target = event.currentTarget as HTMLElement | null;
+  target?.releasePointerCapture?.(event.pointerId);
+  photoWallPointers.delete(event.pointerId);
+  photoWallPinchStart = null;
+
+  const remainingPointer = [...photoWallPointers.values()][0];
+  if (remainingPointer) {
+    photoWallDragging.value = true;
+    photoWallLastPointer = { ...remainingPointer };
+    return;
+  }
+
+  photoWallDragging.value = false;
+  photoWallLastPointer = null;
+  if (photoWallDidMove) {
+    photoWallClickGuardUntil = Date.now() + 320;
+    savePhotoWallScale();
+  }
+}
+
+function savePhotoWallScale(sync = true) {
+  localStorage.setItem(storageKey('memory-photo-wall-scale'), String(photoWallScale.value));
+  if (sync) requestCloudSync('memories');
+}
+
+function loadPhotoWallScale() {
+  const stored = Number(localStorage.getItem(storageKey('memory-photo-wall-scale')));
+  photoWallScale.value = Number.isFinite(stored) ? clamp(stored, 0.08, 12) : DEFAULT_PHOTO_WALL_SCALE;
+}
+
+function schedulePhotoWallScaleSync() {
+  if (photoWallScaleSyncTimer) window.clearTimeout(photoWallScaleSyncTimer);
+  photoWallScaleSyncTimer = window.setTimeout(() => {
+    photoWallScaleSyncTimer = undefined;
+    savePhotoWallScale();
+  }, 420);
+}
+
+function getPhotoWallGestureDistance() {
+  const points = [...photoWallPointers.values()];
+  if (points.length < 2) return 0;
+  return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+}
+
+function getPhotoWallGestureCenter() {
+  const points = [...photoWallPointers.values()];
+  if (points.length < 2) return undefined;
+  return {
+    x: (points[0].x + points[1].x) / 2,
+    y: (points[0].y + points[1].y) / 2
+  };
+}
+
+function startPhotoWallCardDrag(id: string, event: PointerEvent) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return;
+  event.stopPropagation();
+
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  const layout = getPhotoWallLayout(id);
+
+  selectMemoryPhoto(id);
+  photoWallDraggingPhotoId.value = id;
+  photoWallPhotoDragStart = {
+    id,
+    startX: event.clientX,
+    startY: event.clientY,
+    layoutX: layout.x,
+    layoutY: layout.y,
+    layoutZ: getNextPhotoWallZ(),
+    moved: false
+  };
+}
+
+function movePhotoWallCardDrag(id: string, event: PointerEvent) {
+  if (!photoWallPhotoDragStart || photoWallPhotoDragStart.id !== id) return;
+  event.stopPropagation();
+
+  const dx = (event.clientX - photoWallPhotoDragStart.startX) / photoWallScale.value;
+  const dy = (event.clientY - photoWallPhotoDragStart.startY) / photoWallScale.value;
+  if (!photoWallPhotoDragStart.moved && Math.hypot(dx, dy) < 4) return;
+
+  photoWallPhotoDragStart.moved = true;
+  photoWallClickGuardUntil = Date.now() + 320;
+  const current = getPhotoWallLayout(id);
+  const nextLayout = {
+    ...current,
+    x: clamp(photoWallPhotoDragStart.layoutX + dx, -180, PHOTO_WALL_BOARD_WIDTH + 80),
+    y: clamp(photoWallPhotoDragStart.layoutY + dy, -180, PHOTO_WALL_BOARD_HEIGHT + 80),
+    z: photoWallPhotoDragStart.layoutZ
+  };
+  photoWallLayouts.value = {
+    ...photoWallLayouts.value,
+    [id]: nextLayout
+  };
+}
+
+function endPhotoWallCardDrag(id: string, event: PointerEvent) {
+  if (!photoWallPhotoDragStart || photoWallPhotoDragStart.id !== id) return;
+  event.stopPropagation();
+
+  const target = event.currentTarget as HTMLElement | null;
+  target?.releasePointerCapture?.(event.pointerId);
+
+  if (photoWallPhotoDragStart.moved) {
+    saveMemoryPhotoLayouts();
+    memoryPhotoMessage.value = '已儲存照片牆排放。';
+    gentleVibrate(6);
+  }
+
+  photoWallDraggingPhotoId.value = '';
+  photoWallPhotoDragStart = null;
+}
+
+function getPhotoWallLayout(id: string): PhotoWallLayoutOverride {
+  const photoIndex = Math.max(0, memoryPhotos.value.findIndex((photo) => photo.id === id));
+  const layout = PHOTO_WALL_LAYOUT[photoIndex % PHOTO_WALL_LAYOUT.length];
+  const customLayout = photoWallLayouts.value[id];
+  return {
+    x: customLayout?.x ?? layout.x,
+    y: customLayout?.y ?? layout.y,
+    z: customLayout?.z ?? layout.z
+  };
+}
+
+function getNextPhotoWallZ() {
+  const customZValues = Object.values(photoWallLayouts.value).map((layout) => layout.z);
+  const defaultZValues = PHOTO_WALL_LAYOUT.map((layout) => layout.z);
+  return Math.max(1, ...customZValues, ...defaultZValues) + 1;
+}
+
 function selectMemoryPhoto(id: string) {
   if (!memoryPhotos.value.some((photo) => photo.id === id)) return;
   selectedMemoryPhotoId.value = id;
+}
+
+function openMemoryPhotoFromWall(id: string) {
+  if (Date.now() < photoWallClickGuardUntil) return;
+  openMemoryPhotoViewer(id);
 }
 
 function openMemoryPhotoViewer(id: string) {
@@ -2913,6 +3203,8 @@ async function removeMemoryPhoto(id: string) {
   const previousPhotos = [...memoryPhotos.value];
   const previousSelectedId = selectedMemoryPhotoId.value;
   memoryPhotos.value = memoryPhotos.value.filter((item) => item.id !== id);
+  delete photoWallLayouts.value[id];
+  saveMemoryPhotoLayouts(false);
   if (selectedMemoryPhotoId.value === id) {
     selectedMemoryPhotoId.value = memoryPhotos.value[0]?.id ?? '';
   }
@@ -2939,6 +3231,57 @@ async function saveMemoryPhotos() {
   requestCloudSync('memories');
 }
 
+function saveMemoryPhotoLayouts(sync = true) {
+  const photoIds = new Set(memoryPhotos.value.map((photo) => photo.id));
+  const nextLayouts = Object.fromEntries(
+    Object.entries(photoWallLayouts.value).filter(
+      ([id, layout]) =>
+        photoIds.has(id) &&
+        Number.isFinite(layout.x) &&
+        Number.isFinite(layout.y) &&
+        Number.isFinite(layout.z)
+    )
+  ) as Record<string, PhotoWallLayoutOverride>;
+
+  photoWallLayouts.value = nextLayouts;
+  localStorage.setItem(storageKey('memory-photo-layouts'), JSON.stringify(nextLayouts));
+  if (sync) requestCloudSync('memories');
+}
+
+function loadMemoryPhotoLayouts() {
+  const stored = localStorage.getItem(storageKey('memory-photo-layouts'));
+  if (!stored) return;
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+
+    photoWallLayouts.value = Object.fromEntries(
+      Object.entries(parsed).flatMap(([id, layout]) => {
+        if (!layout || typeof layout !== 'object' || Array.isArray(layout)) return [];
+        const rawLayout = layout as Partial<PhotoWallLayoutOverride>;
+        const x = Number(rawLayout.x);
+        const y = Number(rawLayout.y);
+        const z = Number(rawLayout.z);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return [];
+        return [[id, { x, y, z }]];
+      })
+    );
+  } catch {
+    photoWallLayouts.value = {};
+  }
+}
+
+function pruneMemoryPhotoLayouts() {
+  if (!memoryPhotos.value.length || !Object.keys(photoWallLayouts.value).length) return;
+
+  const before = JSON.stringify(photoWallLayouts.value);
+  saveMemoryPhotoLayouts(false);
+  if (JSON.stringify(photoWallLayouts.value) !== before) {
+    requestCloudSync('memories');
+  }
+}
+
 async function loadMemoryPhotos() {
   const legacyStored = localStorage.getItem(storageKey('memory-photos'));
   let legacyPhotos: MemoryPhoto[] = [];
@@ -2957,6 +3300,7 @@ async function loadMemoryPhotos() {
 
   memoryPhotos.value = await loadStoredPhotos(legacyPhotos);
   selectedMemoryPhotoId.value = memoryPhotos.value[0]?.id ?? '';
+  pruneMemoryPhotoLayouts();
   if (legacyStored) localStorage.removeItem(storageKey('memory-photos'));
 }
 
@@ -3039,6 +3383,8 @@ function reloadPersistentState() {
   loadMoodHistory();
   loadSecretCode();
   loadCustomSecretCodes();
+  loadPhotoWallScale();
+  loadMemoryPhotoLayouts();
   loadMemoryCapsules();
   loadHiddenCards();
   loadMeetingChecklist();
@@ -3071,7 +3417,7 @@ function compressImageFile(file: File): Promise<string> {
 
     image.onload = () => {
       try {
-        const maxSide = 1280;
+        const maxSide = 1024;
         const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -3079,9 +3425,9 @@ function compressImageFile(file: File): Promise<string> {
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Canvas is unavailable.');
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        let quality = 0.82;
+        let quality = 0.78;
         let dataUrl = canvas.toDataURL('image/jpeg', quality);
-        while (dataUrl.length > 720_000 && quality > 0.48) {
+        while (dataUrl.length > 420_000 && quality > 0.42) {
           quality -= 0.08;
           dataUrl = canvas.toDataURL('image/jpeg', quality);
         }
@@ -5319,7 +5665,8 @@ provide(appViewContextKey, {
   packingItems, parseJourneyRowsFromImage, parseJourneyRowsFromSpreadsheetFile, passwordBusy,
   passwordInput, passwordStatus, passwordSuccess, pendingImport,
   pendingImportSummary, photoFilmstrip, photoViewerDragging, photoViewerOpen, photoViewerScale,
-  photoViewerTransform, photoWallItems, planeDrag, planeStyle,
+  photoViewerTransform, photoWallBoardStyle, photoWallDragging, photoWallItems,
+  photoWallSurfaceStyle, photoWallZoomLabel, planeDrag, planeStyle,
   activeRoutePercent, flightLandingEffect, flightMapClass, flightOverlayCityMarkers,
   flightOverlayClass, flightOverlayGridLines, flightOverlayIslandMarkers, flightOverlayLandMasses,
   flightOverlayRoutePath, flightOverlayViewBox, flightOverlayWaterWaveLines, flightOverlayWeatherMarkers, flightOverlayWeatherRegions, flightRoutePath,
@@ -5362,13 +5709,15 @@ provide(appViewContextKey, {
   todayNote, todayQuestion, todayStart, todayTask,
   toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment, togglePeriodPrivacyMode, togglePeriodSelection, toggleSecretCodeHelp,
   toggleSuitcaseItem, toggleTask, toggleWish, triggerMilestoneWave,
+  endPhotoWallCardDrag, endPhotoWallGesture, handlePhotoWallWheel, movePhotoWallCardDrag,
+  movePhotoWallGesture, openMemoryPhotoFromWall, resetPhotoWallZoom,
   closeMemoryPhotoViewer, endMemoryPhotoViewerGesture, handleMemoryPhotoViewerWheel,
   moveMemoryPhotoViewerGesture, openMemoryPhotoViewer, startMemoryPhotoViewerGesture,
-  unlockApp, unlockedCount, unlockSecretCode, updateActiveJourneyTitle,
+  startPhotoWallCardDrag, startPhotoWallGesture, unlockApp, unlockedCount, unlockSecretCode, updateActiveJourneyTitle,
   updateAppThemeChrome, updateInstalledDisplayMode, updateJourneyDayField, updateJourneyEntryField,
   updateJourneyTrip, updateOnlineState, updateReady, updateSceneTilt,
   useLocalDataForThisSession, useSecretCodeHint, visibleCapsules, visibleCapsulesDisplay, waitForPasswordSuccess,
-  zoomMemoryPhotoViewer,
+  zoomMemoryPhotoViewer, zoomPhotoWall,
   wishes
 });
 

@@ -301,7 +301,7 @@ function normalizeMemoryPhotos(photos) {
         typeof photo.dataUrl === 'string' &&
         photo.dataUrl.startsWith('data:image/')
     )
-    .slice(0, 8)
+    .slice(0, 24)
     .map((photo) => ({
       id: photo.id.slice(0, 120),
       name: photo.name.slice(0, 180),
