@@ -97,15 +97,27 @@ export default createContextViewComponent('JourneyView');
           <div class="travel-day-fields">
             <label>
               <span>日期</span>
-              <input :value="activeJourneyDay.date" type="date" @input="updateJourneyDayField(activeJourneyDay.id, 'date', getInputValue($event))" />
+              <input
+                v-model="activeJourneyDay.date"
+                type="date"
+                @change="updateJourneyDayField(activeJourneyDay.id, 'date', activeJourneyDay.date)"
+              />
             </label>
             <label>
               <span>城市</span>
-              <input :value="activeJourneyDay.city" @input="updateJourneyDayField(activeJourneyDay.id, 'city', getInputValue($event))" />
+              <input
+                v-model="activeJourneyDay.city"
+                @change="updateJourneyDayField(activeJourneyDay.id, 'city', activeJourneyDay.city)"
+                @blur="updateJourneyDayField(activeJourneyDay.id, 'city', activeJourneyDay.city)"
+              />
             </label>
             <label>
               <span>住宿</span>
-              <input :value="activeJourneyDay.stay" @input="updateJourneyDayField(activeJourneyDay.id, 'stay', getInputValue($event))" />
+              <input
+                v-model="activeJourneyDay.stay"
+                @change="updateJourneyDayField(activeJourneyDay.id, 'stay', activeJourneyDay.stay)"
+                @blur="updateJourneyDayField(activeJourneyDay.id, 'stay', activeJourneyDay.stay)"
+              />
             </label>
           </div>
 
@@ -121,21 +133,21 @@ export default createContextViewComponent('JourneyView');
                     <label class="travel-time-input">
                       <span>開始</span>
                       <input
-                        :value="entry.time"
+                        v-model="entry.time"
                         type="time"
                         step="60"
                         aria-label="開始時間"
-                        @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', getInputValue($event))"
+                        @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', entry.time)"
                       />
                     </label>
                     <label class="travel-time-input">
                       <span>結束</span>
                       <input
-                        :value="entry.endTime"
+                        v-model="entry.endTime"
                         type="time"
                         step="60"
                         aria-label="結束時間"
-                        @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'endTime', getInputValue($event))"
+                        @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'endTime', entry.endTime)"
                       />
                     </label>
                     <button class="travel-check" type="button" @click="toggleJourneyEntryDone(activeJourneyDay.id, entry.id)">
@@ -143,12 +155,33 @@ export default createContextViewComponent('JourneyView');
                     </button>
                   </div>
                   <div class="travel-event-body">
-                    <input class="travel-event-title" :value="entry.plan" placeholder="行程安排" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', getInputValue($event))" />
+                    <input
+                      v-model="entry.plan"
+                      class="travel-event-title"
+                      placeholder="行程安排"
+                      @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', entry.plan)"
+                      @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', entry.plan)"
+                    />
                     <div class="travel-event-meta">
-                      <input :value="entry.transport" placeholder="交通工具" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', getInputValue($event))" />
-                      <input :value="entry.duration" placeholder="車程/時間" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', getInputValue($event))" />
+                      <input
+                        v-model="entry.transport"
+                        placeholder="交通工具"
+                        @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', entry.transport)"
+                        @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', entry.transport)"
+                      />
+                      <input
+                        v-model="entry.duration"
+                        placeholder="車程/時間"
+                        @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', entry.duration)"
+                        @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', entry.duration)"
+                      />
                     </div>
-                    <textarea :value="entry.note" placeholder="備註" @input="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', getTextareaValue($event))"></textarea>
+                    <textarea
+                      v-model="entry.note"
+                      placeholder="備註"
+                      @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', entry.note)"
+                      @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', entry.note)"
+                    ></textarea>
                     <button class="ghost-button travel-remove-entry" type="button" @click="removeJourneyEntry(activeJourneyDay.id, entry.id)">移除</button>
                   </div>
                 </li>
