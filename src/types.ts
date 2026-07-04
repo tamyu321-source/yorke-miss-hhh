@@ -52,6 +52,7 @@ export type FlightZoneId =
   | 'sea'
   | 'tainan'
   | 'shanghai'
+  | 'wuxi'
   | 'harbor'
   | 'strait'
   | 'east-sea'
@@ -63,9 +64,12 @@ export type FlightZoneId =
 
 export type FlightContentZone = 'map' | 'countdown' | 'navigation' | 'today' | 'journey' | 'period' | 'memories' | 'prepare' | 'surface';
 
+export type PlaneReturnPhase = 'idle' | 'destination' | 'home';
+
 export type PlaneDragState = {
   dragging: boolean;
   returning: boolean;
+  returnPhase: PlaneReturnPhase;
   startX: number;
   startY: number;
   offsetX: number;

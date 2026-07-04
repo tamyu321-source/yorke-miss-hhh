@@ -76,7 +76,7 @@ export default createContextViewComponent('CountdownView');
         <span>上海</span>
       </div>
 
-      <div class="flight-map-stage" :class="{ 'is-global-flight': planeInGlobalFlight }">
+      <div class="flight-map-stage" :class="{ 'is-global-flight': showFlightGeoOverlay }">
       <div class="flight-map" :class="flightMapClass">
         <div class="map-texture"></div>
         <span class="plane-trail" :style="planeTrailStyle" aria-hidden="true"></span>
@@ -110,7 +110,7 @@ export default createContextViewComponent('CountdownView');
               :key="line.id"
               class="map-water-wave"
               :d="line.d"
-              :style="{ animationDelay: line.delay }"
+              :style="{ animationDelay: line.delay, opacity: line.opacity, strokeWidth: line.strokeWidth, '--wave-dash': line.dash, '--wave-duration': line.duration }"
             />
           </g>
           <path
@@ -121,6 +121,15 @@ export default createContextViewComponent('CountdownView');
             :d="land.path"
           >
             <title>{{ land.label }}</title>
+          </path>
+          <path
+            v-for="region in mapWeatherRegionMarkers"
+            :key="region.id"
+            class="map-weather-region"
+            :class="[`is-${region.id}`, `weather-${region.weather.kind}`]"
+            :d="region.path"
+          >
+            <title>{{ region.label }} {{ region.weather.label }}</title>
           </path>
           <path
             v-for="line in mapGridLines"
@@ -153,6 +162,23 @@ export default createContextViewComponent('CountdownView');
           >
             <title>{{ city.label }} {{ city.caption }}</title>
           </circle>
+          <g
+            v-for="marker in mapWeatherMarkers"
+            :key="marker.id"
+            class="weather-marker map-weather-marker"
+            :class="[`is-${marker.id}`, `weather-${marker.weather.kind}`]"
+            :transform="`translate(${marker.point.x} ${marker.point.y})`"
+          >
+            <title>{{ marker.label }} {{ marker.weather.label }} {{ marker.weather.temperature ?? '--' }}°C</title>
+            <circle class="weather-halo" r="14" />
+            <circle class="weather-sun" cx="-5" cy="-6" r="4.4" />
+            <ellipse class="weather-cloud cloud-a" cx="2" cy="0" rx="9" ry="5.2" />
+            <ellipse class="weather-cloud cloud-b" cx="-6" cy="2" rx="5.6" ry="4" />
+            <path class="weather-rain-lines" d="M-8 8 l-3 8 M0 9 l-3 8 M8 8 l-3 8" />
+            <path class="weather-wind-lines" d="M-13 -2 C-4 -6, 8 -6, 14 -2 M-11 5 C-3 1, 8 1, 13 5" />
+            <path class="weather-lightning" d="M2 -9 L-5 2 H1 L-4 13 L9 -3 H3 Z" />
+            <text class="weather-marker-label" y="25">{{ marker.shortLabel }}</text>
+          </g>
         </svg>
         <span
           v-for="stop in mapRouteStopMarkers"
@@ -163,7 +189,7 @@ export default createContextViewComponent('CountdownView');
         >
           {{ stop.label }}
         </span>
-        <div
+        <!-- <div
           v-for="city in mapCityMarkers"
           :key="`${city.id}-label`"
           class="city-label"
@@ -172,10 +198,10 @@ export default createContextViewComponent('CountdownView');
         >
           <strong>{{ city.label }}</strong>
           <span>{{ city.caption }}</span>
-        </div>
-        <div class="map-progress-badge" :style="{ left: `${activeRoutePercent.x}%`, top: `${activeRoutePercent.y}%` }">
+        </div> -->
+        <!-- <div class="map-progress-badge" :style="{ left: `${activeRoutePercent.x}%`, top: `${activeRoutePercent.y}%` }">
           {{ progressPercent }}%
-        </div>
+        </div> -->
       </div>
         <button
           class="plane map-plane"
@@ -207,7 +233,7 @@ export default createContextViewComponent('CountdownView');
 
       <Teleport to="body">
         <div
-          v-if="planeInGlobalFlight"
+          v-if="showFlightGeoOverlay"
           class="flight-geo-overlay"
           :class="[flightOverlayClass, themeClass]"
           aria-hidden="true"
@@ -238,7 +264,7 @@ export default createContextViewComponent('CountdownView');
                 :key="line.id"
                 class="geo-water-wave"
                 :d="line.d"
-                :style="{ animationDelay: line.delay }"
+                :style="{ animationDelay: line.delay, opacity: line.opacity, strokeWidth: line.strokeWidth, '--wave-dash': line.dash, '--wave-duration': line.duration }"
               />
             </g>
             <path
@@ -253,6 +279,13 @@ export default createContextViewComponent('CountdownView');
               class="geo-land"
               :class="`is-${land.id}`"
               :d="land.path"
+            />
+            <path
+              v-for="region in flightOverlayWeatherRegions"
+              :key="region.id"
+              class="geo-weather-region"
+              :class="[`is-${region.id}`, `weather-${region.weather.kind}`]"
+              :d="region.path"
             />
             <circle
               v-for="island in flightOverlayIslandMarkers"
@@ -273,6 +306,22 @@ export default createContextViewComponent('CountdownView');
               :cy="city.point.y"
               r="8"
             />
+            <g
+              v-for="marker in flightOverlayWeatherMarkers"
+              :key="marker.id"
+              class="weather-marker geo-weather-marker"
+              :class="[`is-${marker.id}`, `weather-${marker.weather.kind}`]"
+              :transform="`translate(${marker.point.x} ${marker.point.y})`"
+            >
+              <circle class="weather-halo" r="22" />
+              <circle class="weather-sun" cx="-8" cy="-8" r="7" />
+              <ellipse class="weather-cloud cloud-a" cx="4" cy="0" rx="15" ry="8" />
+              <ellipse class="weather-cloud cloud-b" cx="-9" cy="3" rx="8" ry="6" />
+              <path class="weather-rain-lines" d="M-13 13 l-5 15 M0 15 l-5 15 M13 13 l-5 15" />
+              <path class="weather-wind-lines" d="M-22 -3 C-7 -11, 14 -10, 24 -3 M-18 10 C-5 3, 13 4, 22 10" />
+              <path class="weather-lightning" d="M4 -16 L-8 3 H2 L-7 24 L15 -5 H5 Z" />
+              <text class="weather-marker-label" y="38">{{ marker.shortLabel }}</text>
+            </g>
             <circle class="geo-plane-pulse pulse-wide" :cx="planeDrag.screenX" :cy="planeDrag.screenY" r="34" />
             <circle class="geo-plane-pulse" :cx="planeDrag.screenX" :cy="planeDrag.screenY" r="18" />
           </svg>

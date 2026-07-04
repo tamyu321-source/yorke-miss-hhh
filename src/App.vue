@@ -99,6 +99,9 @@ import {
 
 const MAP_VIEWBOX_WIDTH = 320;
 const MAP_VIEWBOX_HEIGHT = 190;
+const PLANE_RETURN_DESTINATION_DELAY_MS = 120;
+const PLANE_RETURN_HOME_DELAY_MS = 980;
+const PLANE_RETURN_RESET_DELAY_MS = 2_040;
 const mapBounds = {
   minLon: 116.6,
   maxLon: 123.4,
@@ -107,6 +110,18 @@ const mapBounds = {
 };
 
 type GeoPoint = readonly [lon: number, lat: number];
+type MapWeatherKind = 'sunny' | 'cloudy' | 'rain' | 'storm' | 'fog' | 'wind';
+type WeatherStationId = 'tainan' | 'shanghai' | 'wuxi';
+
+type MapWeatherSnapshot = {
+  kind: MapWeatherKind;
+  label: string;
+  temperature: number | null;
+  windSpeed: number | null;
+  precipitation: number | null;
+  source: 'live' | 'fallback';
+  updatedAt: string;
+};
 
 function projectGeoPoint(lat: number, lon: number, width: number, height: number) {
   const x = ((lon - mapBounds.minLon) / (mapBounds.maxLon - mapBounds.minLon)) * width;
@@ -134,12 +149,18 @@ function projectGeoPath(points: readonly GeoPoint[], close = true) {
 }
 
 const mapCityPins = [
-  { id: 'tainan', label: '台南', caption: '22.9999°N, 120.2270°E', lat: 22.9999, lon: 120.2270, kind: 'start' },
-  { id: 'shanghai', label: '上海', caption: '31.2304°N, 121.4737°E', lat: 31.2304, lon: 121.4737, kind: 'end' }
+  { id: 'tainan', label: '台南', caption: '22.9999°N, 120.2270°E', lat: 22.9999, lon: 120.2270, kind: 'start', weatherStationId: 'tainan' },
+  { id: 'shanghai', label: '上海', caption: '31.2304°N, 121.4737°E', lat: 31.2304, lon: 121.4737, kind: 'end', weatherStationId: 'shanghai' },
+  { id: 'wuxi', label: '無錫', caption: '31.4912°N, 120.3119°E', lat: 31.4912, lon: 120.3119, kind: 'hub', weatherStationId: 'wuxi' }
 ] as const;
 const mapRouteStops = [
   { id: 'taiwan-strait', label: '台灣海峽', lat: 24.4, lon: 119.4 },
   { id: 'east-china-sea', label: '東海', lat: 28.5, lon: 121.9 }
+] as const;
+const weatherStations = [
+  { id: 'tainan', label: '台南', shortLabel: '台南', lat: 22.9999, lon: 120.2270, side: 'south' },
+  { id: 'shanghai', label: '上海', shortLabel: '上海', lat: 31.2304, lon: 121.4737, side: 'delta' },
+  { id: 'wuxi', label: '無錫', shortLabel: '無錫', lat: 31.4912, lon: 120.3119, side: 'delta' }
 ] as const;
 const chinaCoastPoints: readonly GeoPoint[] = [
   [116.6, 32.2],
@@ -182,6 +203,17 @@ const taiwanOutlinePoints: readonly GeoPoint[] = [
   [121.54, 25.30],
   [121.88, 25.28]
 ];
+const yangtzeDeltaBlockPoints: readonly GeoPoint[] = [
+  [119.72, 32.16],
+  [120.66, 32.34],
+  [121.84, 32.14],
+  [122.46, 31.58],
+  [122.18, 30.86],
+  [121.08, 30.36],
+  [120.02, 30.58],
+  [119.58, 31.18],
+  [119.72, 32.16]
+];
 const mapLandMasses = [
   {
     id: 'china-coast',
@@ -200,6 +232,13 @@ const mapIslandMarkers = [
   { id: 'matsu', label: '馬祖', radius: 2.1, ...projectMapPoint(26.16, 119.95) },
   { id: 'zhoushan', label: '舟山', radius: 3.0, ...projectMapPoint(30.02, 122.10) }
 ] as const;
+const mapWeatherRegions = [
+  {
+    id: 'yangtze-delta',
+    label: '上海 / 無錫天氣帶',
+    path: projectGeoPath(yangtzeDeltaBlockPoints)
+  }
+] as const;
 
 const mapGridLines = [
   { id: 'lat-24', d: `M0 ${projectMapPoint(24, mapBounds.minLon).y} H${MAP_VIEWBOX_WIDTH}`, label: '24°N' },
@@ -209,13 +248,18 @@ const mapGridLines = [
   { id: 'lon-120', d: `M${projectMapPoint(mapBounds.minLat, 120).x} 0 V${MAP_VIEWBOX_HEIGHT}`, label: '120°E' },
   { id: 'lon-122', d: `M${projectMapPoint(mapBounds.minLat, 122).x} 0 V${MAP_VIEWBOX_HEIGHT}`, label: '122°E' }
 ] as const;
-const mapWaterWaveLines = Array.from({ length: 9 }, (_, index) => {
-  const y = 31 + index * 16.5;
-  const offset = index % 2 === 0 ? 7 : -7;
+const mapWaterWaveLines = Array.from({ length: 4 }, (_, index) => {
+  const y = 43 + index * 36;
+  const amplitude = 5.5 + (index % 2) * 1.6;
+  const direction = index % 2 === 0 ? 1 : -1;
   return {
     id: `map-water-wave-${index}`,
-    d: `M-18 ${y} C22 ${y + offset}, 54 ${y - offset}, 94 ${y} S166 ${y + offset}, 212 ${y} S286 ${y - offset}, 338 ${y + offset}`,
-    delay: `${index * 110}ms`
+    d: `M-46 ${y} C18 ${y - amplitude * direction}, 62 ${y + amplitude * 0.82 * direction}, 116 ${y} S214 ${y - amplitude * 0.72 * direction}, 366 ${y + amplitude * 0.42 * direction}`,
+    delay: `-${index * 4_200}ms`,
+    duration: `${18 + index * 2}s`,
+    opacity: `${0.34 + index * 0.045}`,
+    strokeWidth: `${1.25 + index * 0.12}`,
+    dash: `${116 + index * 18} ${228 + index * 28}`
   };
 });
 const mapRouteStart = projectMapPoint(mapCityPins[0].lat, mapCityPins[0].lon);
@@ -263,6 +307,7 @@ const flightZoneLabels: Record<FlightZoneId, string> = {
   sea: '海面低飛',
   tainan: '台南起飛',
   shanghai: '城市夜降',
+  wuxi: '湖城掠降',
   harbor: '跑道降落',
   strait: '海峽穿越',
   'east-sea': '東海流光',
@@ -285,10 +330,82 @@ const flightContentLabels: Record<FlightContentZone, string> = {
   surface: '頁面空域'
 };
 
+const weatherKindPriority: Record<MapWeatherKind, number> = {
+  storm: 6,
+  rain: 5,
+  fog: 4,
+  wind: 3,
+  cloudy: 2,
+  sunny: 1
+};
+
+function createWeatherSnapshot(
+  kind: MapWeatherKind,
+  label: string,
+  source: MapWeatherSnapshot['source'],
+  temperature: number | null = null,
+  windSpeed: number | null = null,
+  precipitation: number | null = null
+): MapWeatherSnapshot {
+  return {
+    kind,
+    label,
+    temperature,
+    windSpeed,
+    precipitation,
+    source,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function getFallbackWeather(stationId: WeatherStationId): MapWeatherSnapshot {
+  const month = new Date().getMonth() + 1;
+  if (stationId === 'tainan') {
+    return month >= 5 && month <= 10
+      ? createWeatherSnapshot('rain', '午後雲雨', 'fallback', 29, 16, 0.6)
+      : createWeatherSnapshot('sunny', '晴朗微風', 'fallback', 24, 12, 0);
+  }
+  if (stationId === 'wuxi') {
+    return month >= 6 && month <= 9
+      ? createWeatherSnapshot('cloudy', '湖面雲光', 'fallback', 28, 14, 0.1)
+      : createWeatherSnapshot('fog', '薄霧湖城', 'fallback', 15, 10, 0);
+  }
+  return month >= 6 && month <= 9
+    ? createWeatherSnapshot('wind', '江風雲帶', 'fallback', 28, 20, 0.1)
+    : createWeatherSnapshot('cloudy', '城市雲幕', 'fallback', 17, 14, 0);
+}
+
+function createFallbackWeatherMap(): Record<WeatherStationId, MapWeatherSnapshot> {
+  return {
+    tainan: getFallbackWeather('tainan'),
+    shanghai: getFallbackWeather('shanghai'),
+    wuxi: getFallbackWeather('wuxi')
+  };
+}
+
+function getWeatherKindFromCode(weatherCode: number, windSpeed: number, precipitation: number): MapWeatherKind {
+  if ([95, 96, 99].includes(weatherCode)) return 'storm';
+  if ((weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 80 && weatherCode <= 82) || precipitation > 0.25) return 'rain';
+  if ([45, 48].includes(weatherCode)) return 'fog';
+  if (windSpeed >= 28) return 'wind';
+  if (weatherCode >= 2 && weatherCode <= 3) return 'cloudy';
+  return 'sunny';
+}
+
+function getWeatherLabel(kind: MapWeatherKind) {
+  if (kind === 'storm') return '雷雨閃光';
+  if (kind === 'rain') return '雨線流動';
+  if (kind === 'fog') return '霧面漫開';
+  if (kind === 'wind') return '風帶掠過';
+  if (kind === 'cloudy') return '雲層漂移';
+  return '晴光閃爍';
+}
+
 function createPlaneDragState(): PlaneDragState {
   return {
     dragging: false,
     returning: false,
+    returnPhase: 'idle',
     startX: 0,
     startY: 0,
     offsetX: 0,
@@ -321,6 +438,7 @@ const moodHistory = ref<string[]>([]);
 const planeDrag = ref<PlaneDragState>(createPlaneDragState());
 const flightLandingEffect = ref<FlightLandingEffect | null>(null);
 const viewportSize = ref({ width: window.innerWidth, height: window.innerHeight });
+const mapWeather = ref<Record<WeatherStationId, MapWeatherSnapshot>>(createFallbackWeatherMap());
 const secretCodeInput = ref('');
 const secretCodeUnlocked = ref(false);
 const memoryPhotos = ref<MemoryPhoto[]>([]);
@@ -407,11 +525,13 @@ let timer: number | undefined;
 let secretPressTimer: number | undefined;
 let planeResetTimer: number | undefined;
 let planeReturnTimer: number | undefined;
+let planeHomeReturnTimer: number | undefined;
 let introTimer: number | undefined;
 let passwordSuccessTimer: number | undefined;
 let themeTransitionTimer: number | undefined;
 let themePreviewTimer: number | undefined;
 let milestoneTimer: number | undefined;
+let weatherTimer: number | undefined;
 let cloudSyncTimer: number | undefined;
 let pendingCloudSync = false;
 let pendingCloudFeatures = new Set<CloudFeature>();
@@ -484,16 +604,45 @@ const progress = computed(() => {
   return clamp(elapsed / total, 0, 1);
 });
 const progressPercent = computed(() => Math.round(progress.value * 100));
+const deltaWeather = computed(() => {
+  const candidates = [mapWeather.value.shanghai, mapWeather.value.wuxi];
+  return candidates.reduce((selected, current) =>
+    weatherKindPriority[current.kind] > weatherKindPriority[selected.kind] ? current : selected
+  );
+});
 const mapCityMarkers = computed(() =>
   mapCityPins.map((city) => {
     const point = projectMapPoint(city.lat, city.lon);
+    const weather = mapWeather.value[city.weatherStationId];
     return {
       ...city,
+      weather,
       point,
       dotStyle: getMapPointStyle(point),
       labelStyle: getMapPointStyle(point, {
-        transform: city.kind === 'start' ? 'translate(-108%, -96%)' : 'translate(38%, -52%)'
+        transform:
+          city.kind === 'start'
+            ? 'translate(-108%, -96%)'
+            : city.kind === 'hub'
+              ? 'translate(-68%, -168%)'
+              : 'translate(38%, -52%)'
       })
+    };
+  })
+);
+const mapWeatherRegionMarkers = computed(() =>
+  mapWeatherRegions.map((region) => ({
+    ...region,
+    weather: deltaWeather.value
+  }))
+);
+const mapWeatherMarkers = computed(() =>
+  weatherStations.map((station) => {
+    const point = projectMapPoint(station.lat, station.lon);
+    return {
+      ...station,
+      point,
+      weather: mapWeather.value[station.id]
     };
   })
 );
@@ -545,20 +694,45 @@ const flightOverlayGridLines = computed(() => {
 const flightOverlayCityMarkers = computed(() =>
   mapCityPins.map((city) => ({
     ...city,
-    point: projectGeoPoint(city.lat, city.lon, viewportSize.value.width, viewportSize.value.height)
+    point: projectGeoPoint(city.lat, city.lon, viewportSize.value.width, viewportSize.value.height),
+    weather: mapWeather.value[city.weatherStationId]
+  }))
+);
+const flightOverlayWeatherRegions = computed(() =>
+  mapWeatherRegions.map((region) => ({
+    ...region,
+    path: projectGeoPathInBox(
+      region.id === 'yangtze-delta' ? yangtzeDeltaBlockPoints : yangtzeDeltaBlockPoints,
+      viewportSize.value.width,
+      viewportSize.value.height
+    ),
+    weather: deltaWeather.value
+  }))
+);
+const flightOverlayWeatherMarkers = computed(() =>
+  weatherStations.map((station) => ({
+    ...station,
+    point: projectGeoPoint(station.lat, station.lon, viewportSize.value.width, viewportSize.value.height),
+    weather: mapWeather.value[station.id]
   }))
 );
 const flightOverlayWaterWaveLines = computed(() => {
   const width = Math.max(1, viewportSize.value.width);
   const height = Math.max(1, viewportSize.value.height);
-  const count = Math.max(12, Math.ceil(height / 44));
+  const count = clamp(Math.ceil(height / 180), 4, 6);
+  const spacing = height / (count + 1);
   return Array.from({ length: count }, (_, index) => {
-    const y = 24 + index * 42;
-    const amplitude = 11 + (index % 3) * 4;
+    const y = spacing * (index + 1) + (index % 2 === 0 ? spacing * 0.08 : spacing * -0.05);
+    const amplitude = Math.max(12, Math.min(24, height * (0.017 + (index % 3) * 0.003)));
+    const direction = index % 2 === 0 ? 1 : -1;
     return {
       id: `flight-water-wave-${index}`,
-      d: `M${width * -0.08} ${y} C${width * 0.12} ${y + amplitude}, ${width * 0.22} ${y - amplitude}, ${width * 0.36} ${y} S${width * 0.62} ${y + amplitude}, ${width * 0.78} ${y} S${width * 1.02} ${y - amplitude}, ${width * 1.08} ${y + amplitude}`,
-      delay: `${index * 90}ms`
+      d: `M${width * -0.18} ${y} C${width * 0.06} ${y - amplitude * direction}, ${width * 0.2} ${y + amplitude * 0.78 * direction}, ${width * 0.38} ${y} S${width * 0.72} ${y - amplitude * 0.72 * direction}, ${width * 0.9} ${y} S${width * 1.08} ${y + amplitude * 0.46 * direction}, ${width * 1.2} ${y - amplitude * 0.18 * direction}`,
+      delay: `-${index * 5_100}ms`,
+      duration: `${20 + index * 1.8}s`,
+      opacity: `${0.2 + index * 0.035}`,
+      strokeWidth: `${1.45 + index * 0.1}`,
+      dash: `${Math.round(width * 0.16)} ${Math.round(width * 0.31)}`
     };
   });
 });
@@ -573,6 +747,9 @@ const flightOverlayViewBox = computed(() => `0 0 ${Math.max(1, viewportSize.valu
 const activeRoutePoint = computed(() => getRoutePoint(progress.value));
 const activeRoutePercent = computed(() => toMapPercent(activeRoutePoint.value));
 const planeInGlobalFlight = computed(() => planeDrag.value.dragging || planeDrag.value.returning);
+const showFlightGeoOverlay = computed(
+  () => planeDrag.value.dragging || (planeDrag.value.returning && planeDrag.value.returnPhase === 'destination')
+);
 const flightMapClass = computed(() => ({
   'milestone-wave': milestoneFlash.value,
   'is-plane-excursion': planeInGlobalFlight.value
@@ -580,6 +757,7 @@ const flightMapClass = computed(() => ({
 const planeFlightClass = computed(() => ({
   dragging: planeDrag.value.dragging,
   returning: planeDrag.value.returning,
+  [`return-${planeDrag.value.returnPhase}`]: planeDrag.value.returning,
   'global-flight': planeInGlobalFlight.value,
   [`zone-${planeDrag.value.zone}`]: true
 }));
@@ -1614,6 +1792,10 @@ onMounted(() => {
   window.addEventListener('mouseup', endPlaneMouseDrag);
   navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange);
   updateInstalledDisplayMode();
+  void loadMapWeather();
+  weatherTimer = window.setInterval(() => {
+    void loadMapWeather();
+  }, 30 * 60 * 1_000);
   timer = window.setInterval(() => {
     now.value = new Date();
   }, 1_000);
@@ -1626,13 +1808,13 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer);
-  if (planeResetTimer) window.clearTimeout(planeResetTimer);
-  if (planeReturnTimer) window.clearTimeout(planeReturnTimer);
+  clearPlaneReturnTimers();
   if (introTimer) window.clearTimeout(introTimer);
   if (passwordSuccessTimer) window.clearTimeout(passwordSuccessTimer);
   if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
   if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
   if (milestoneTimer) window.clearTimeout(milestoneTimer);
+  if (weatherTimer) window.clearInterval(weatherTimer);
   if (flightLandingTimer) window.clearTimeout(flightLandingTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
   stopBackgroundMusic();
@@ -3037,6 +3219,43 @@ function updateViewportSize() {
     width: window.innerWidth,
     height: window.innerHeight
   };
+}
+
+async function loadMapWeather() {
+  const url = new URL('https://api.open-meteo.com/v1/forecast');
+  url.searchParams.set('latitude', weatherStations.map((station) => station.lat).join(','));
+  url.searchParams.set('longitude', weatherStations.map((station) => station.lon).join(','));
+  url.searchParams.set('current', 'temperature_2m,weather_code,wind_speed_10m,precipitation,is_day');
+  url.searchParams.set('timezone', 'auto');
+  url.searchParams.set('forecast_days', '1');
+
+  try {
+    const response = await fetch(url.toString(), { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Weather request failed: ${response.status}`);
+    const payload = await response.json();
+    const results = Array.isArray(payload) ? payload : [payload];
+    const nextWeather = { ...mapWeather.value };
+    weatherStations.forEach((station, index) => {
+      const current = results[index]?.current;
+      if (!current) return;
+      const weatherCode = Number(current.weather_code ?? 0);
+      const windSpeed = Number(current.wind_speed_10m ?? 0);
+      const precipitation = Number(current.precipitation ?? 0);
+      const temperature = Number(current.temperature_2m ?? Number.NaN);
+      const kind = getWeatherKindFromCode(weatherCode, windSpeed, precipitation);
+      nextWeather[station.id] = createWeatherSnapshot(
+        kind,
+        getWeatherLabel(kind),
+        'live',
+        Number.isFinite(temperature) ? Math.round(temperature) : null,
+        Number.isFinite(windSpeed) ? Math.round(windSpeed) : null,
+        Number.isFinite(precipitation) ? precipitation : null
+      );
+    });
+    mapWeather.value = nextWeather;
+  } catch {
+    mapWeather.value = createFallbackWeatherMap();
+  }
 }
 
 function handleBeforeInstallPrompt(event: Event) {
@@ -4459,6 +4678,7 @@ function isGeoPointInPolygon(point: { lat: number; lon: number }, polygon: reado
 
 function getGeoFlightZone(geo: { lat: number; lon: number }): FlightZoneId {
   if (getGeoDistanceKm(geo, mapCityPins[0]) < 46) return 'tainan';
+  if (getGeoDistanceKm(geo, mapCityPins[2]) < 58) return 'wuxi';
   if (getGeoDistanceKm(geo, mapCityPins[1]) < 72) return 'shanghai';
   if (isGeoPointInPolygon(geo, taiwanOutlinePoints)) return 'taiwan';
   if (geo.lon <= 119.15 && geo.lat >= 22.6 && geo.lat <= 31.4) return 'coast';
@@ -4531,17 +4751,50 @@ function launchLandingEffect(zone: FlightZoneId, x: number, y: number, contentZo
   }, 1500);
 }
 
+function clearPlaneReturnTimers() {
+  if (planeResetTimer) {
+    window.clearTimeout(planeResetTimer);
+    planeResetTimer = undefined;
+  }
+  if (planeReturnTimer) {
+    window.clearTimeout(planeReturnTimer);
+    planeReturnTimer = undefined;
+  }
+  if (planeHomeReturnTimer) {
+    window.clearTimeout(planeHomeReturnTimer);
+    planeHomeReturnTimer = undefined;
+  }
+}
+
+function getFullscreenRouteDestinationState() {
+  const destination = mapCityPins[1];
+  const width = Math.max(viewportSize.value.width, 1);
+  const height = Math.max(viewportSize.value.height, 1);
+  const margin = 34;
+  const point = projectGeoPoint(destination.lat, destination.lon, width, height);
+  const zone: FlightZoneId = 'shanghai';
+  const contentZone: FlightContentZone = 'map';
+  return {
+    screenX: clamp(point.x, margin, Math.max(margin, width - margin)),
+    screenY: clamp(point.y, margin, Math.max(margin, height - margin)),
+    zone,
+    contentZone,
+    lat: destination.lat,
+    lon: destination.lon
+  };
+}
+
 function beginPlaneDrag(clientX: number, clientY: number, target: HTMLElement | null) {
   const rect = target?.getBoundingClientRect();
   if (!rect) return;
-  if (planeResetTimer) window.clearTimeout(planeResetTimer);
-  if (planeReturnTimer) window.clearTimeout(planeReturnTimer);
+  clearPlaneReturnTimers();
   const homeX = rect.left + rect.width / 2;
   const homeY = rect.top + rect.height / 2;
   const pointState = getFlightPointState(homeX, homeY);
   planeDrag.value = {
     dragging: true,
     returning: false,
+    returnPhase: 'idle',
     startX: clientX - homeX,
     startY: clientY - homeY,
     offsetX: 0,
@@ -4605,26 +4858,45 @@ function endPlaneDrag(event?: PointerEvent) {
   const landingContentZone = planeDrag.value.contentZone;
   const landingLat = planeDrag.value.lat;
   const landingLon = planeDrag.value.lon;
+  const destinationState = getFullscreenRouteDestinationState();
   launchLandingEffect(landingZone, landingX, landingY, landingContentZone, landingLat, landingLon);
-  planeDrag.value = { ...planeDrag.value, dragging: false, returning: true, screenX: landingX, screenY: landingY };
+  planeDrag.value = {
+    ...planeDrag.value,
+    dragging: false,
+    returning: true,
+    returnPhase: 'destination',
+    screenX: landingX,
+    screenY: landingY
+  };
   gentleVibrate(6);
-  if (planeResetTimer) window.clearTimeout(planeResetTimer);
-  if (planeReturnTimer) window.clearTimeout(planeReturnTimer);
+  clearPlaneReturnTimers();
   planeReturnTimer = window.setTimeout(() => {
     window.requestAnimationFrame(() => {
       planeDrag.value = {
         ...planeDrag.value,
-        screenX: planeDrag.value.homeX,
-        screenY: planeDrag.value.homeY,
-        zone: 'route',
-        contentZone: 'map'
+        ...destinationState,
+        returnPhase: 'destination'
       };
     });
     planeReturnTimer = undefined;
-  }, 180);
+  }, PLANE_RETURN_DESTINATION_DELAY_MS);
+  planeHomeReturnTimer = window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      planeDrag.value = {
+        ...planeDrag.value,
+        returnPhase: 'home',
+        zone: 'route',
+        contentZone: 'map',
+        screenX: planeDrag.value.homeX,
+        screenY: planeDrag.value.homeY
+      };
+    });
+    planeHomeReturnTimer = undefined;
+  }, PLANE_RETURN_HOME_DELAY_MS);
   planeResetTimer = window.setTimeout(() => {
     planeDrag.value = createPlaneDragState();
-  }, 1_170);
+    planeResetTimer = undefined;
+  }, PLANE_RETURN_RESET_DELAY_MS);
 }
 
 function endPlaneMouseDrag() {
@@ -4747,9 +5019,10 @@ provide(appViewContextKey, {
   pendingImportSummary, photoFilmstrip, planeDrag, planeStyle,
   activeRoutePercent, flightLandingEffect, flightMapClass, flightOverlayCityMarkers,
   flightOverlayClass, flightOverlayGridLines, flightOverlayIslandMarkers, flightOverlayLandMasses,
-  flightOverlayRoutePath, flightOverlayViewBox, flightOverlayWaterWaveLines, flightRoutePath,
+  flightOverlayRoutePath, flightOverlayViewBox, flightOverlayWaterWaveLines, flightOverlayWeatherMarkers, flightOverlayWeatherRegions, flightRoutePath,
   mapCityMarkers, mapGridLines, mapIslandMarkers, mapLandMasses,
-  mapRouteStopMarkers, mapWaterWaveLines, planeFlightClass, planeGeoReadout, planeHomeStyle, planeInGlobalFlight, planeZoneHintStyle, planeZoneLabel,
+  mapRouteStopMarkers, mapWaterWaveLines, mapWeather, mapWeatherMarkers, mapWeatherRegionMarkers, planeFlightClass, planeGeoReadout, planeHomeStyle, planeInGlobalFlight, planeZoneHintStyle, planeZoneLabel,
+  showFlightGeoOverlay,
   periodAnomalyAlerts, periodCalendarOffset, periodCalendarRangeLabel,
   periodCareOptions, periodCareSuggestionCards, periodConfidenceLabel, periodCycleStats, periodDisplayName,
   periodPrivacyMode, periodRecordFormTitle, periodRecordSubmitLabel, periodReminderCards,
