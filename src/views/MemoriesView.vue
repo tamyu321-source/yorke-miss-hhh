@@ -34,46 +34,71 @@ export default createContextViewComponent('MemoriesView');
       <div class="section-title-row">
         <div>
           <p class="section-kicker">雙人暗號</p>
-          <h2 id="secret-code-title">{{ secretCodeUnlocked ? '隱藏卡片已開啟' : '輸入只有你們懂的詞' }}</h2>
+          <h2 id="secret-code-title">{{ secretCodeUnlocked ? '雙人私密區' : '先對暗號，再開信封' }}</h2>
         </div>
+        <span class="date-pill">{{ secretCodeUnlocked ? '已開啟' : '上鎖中' }}</span>
       </div>
-      <div class="secret-code-row">
-        <input v-model="secretCodeInput" maxlength="16" placeholder="輸入暗號" @keyup.enter="unlockSecretCode" />
-        <button class="soft-button" type="button" @click="unlockSecretCode">解鎖</button>
+
+      <div v-if="!secretCodeUnlocked" class="secret-code-gate">
+        <div class="secret-code-lock" aria-hidden="true">⌁</div>
+        <div class="secret-code-row">
+          <input v-model="secretCodeInput" maxlength="16" placeholder="輸入你們約好的暗號" @keyup.enter="unlockSecretCode" />
+          <button class="soft-button" type="button" @click="unlockSecretCode">打開信封</button>
+        </div>
+        <p class="secret-code-status">{{ secretCodeMessage || '暗號通過後，才會看到隱藏卡片與暗號管理。' }}</p>
       </div>
-      <div class="secret-code-row">
-        <input v-model="newSecretCode" maxlength="16" placeholder="新增暗號" @keyup.enter="addCustomSecretCode" />
-        <button class="ghost-button" type="button" @click="addCustomSecretCode">加入</button>
-      </div>
-      <div v-if="customSecretCodes.length" class="secret-code-list">
-        <button v-for="code in customSecretCodes" :key="code" type="button" @click="removeCustomSecretCode(code)">
-          {{ code }} ×
-        </button>
-      </div>
-      <div v-if="secretCodeUnlocked" class="hidden-card-editor">
-        <input v-model="hiddenCardTitleDraft" maxlength="28" placeholder="卡片標題" />
-        <textarea v-model="hiddenCardTextDraft" maxlength="220" placeholder="寫一張只有解鎖後才看得到的卡片"></textarea>
-        <div class="message-actions">
-          <span>{{ hiddenCardTextDraft.length }} / 220</span>
+
+      <template v-else>
+        <div class="secret-code-unlocked-panel">
           <div>
-            <button v-if="editingHiddenCardId" class="ghost-button" type="button" @click="cancelHiddenCardEdit">取消</button>
-            <button class="soft-button" type="button" @click="saveHiddenCard">
-              {{ editingHiddenCardId ? '保存修改' : '新增卡片' }}
+            <strong>信封已打開</strong>
+            <p>{{ secretCodeMessage || '可以新增、編輯只在暗號通過後才看得到的卡片。' }}</p>
+          </div>
+          <button class="ghost-button" type="button" @click="lockSecretCode">重新上鎖</button>
+        </div>
+
+        <div class="hidden-card-editor">
+          <input v-model="hiddenCardTitleDraft" maxlength="28" placeholder="卡片標題" />
+          <textarea v-model="hiddenCardTextDraft" maxlength="220" placeholder="寫一張只有解鎖後才看得到的卡片"></textarea>
+          <div class="message-actions">
+            <span>{{ hiddenCardTextDraft.length }} / 220</span>
+            <div>
+              <button v-if="editingHiddenCardId" class="ghost-button" type="button" @click="cancelHiddenCardEdit">取消</button>
+              <button class="soft-button" type="button" @click="saveHiddenCard">
+                {{ editingHiddenCardId ? '保存修改' : '新增卡片' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="hidden-card-list">
+          <article v-for="card in hiddenCards" :key="card.id" class="hidden-card unlocked">
+            <strong>{{ card.title }}</strong>
+            <p>{{ card.text }}</p>
+            <div>
+              <button type="button" @click="editHiddenCard(card.id)">編輯</button>
+              <button type="button" @click="removeHiddenCard(card.id)">刪除</button>
+            </div>
+          </article>
+        </div>
+
+        <div class="secret-code-management">
+          <div>
+            <strong>管理雙人暗號</strong>
+            <p>新增後，兩個人下次都可以用這組暗號打開信封。</p>
+          </div>
+          <div class="secret-code-row">
+            <input v-model="newSecretCode" maxlength="16" placeholder="新增一組暗號" @keyup.enter="addCustomSecretCode" />
+            <button class="ghost-button" type="button" @click="addCustomSecretCode">加入</button>
+          </div>
+          <div v-if="customSecretCodes.length" class="secret-code-list">
+            <button v-for="code in customSecretCodes" :key="code" type="button" @click="removeCustomSecretCode(code)">
+              {{ code }} ×
             </button>
           </div>
+          <p v-else class="secret-code-status">目前只使用預設暗號，還沒有新增自訂暗號。</p>
         </div>
-      </div>
-      <div v-if="secretCodeUnlocked" class="hidden-card-list">
-        <article v-for="card in hiddenCards" :key="card.id" class="hidden-card unlocked">
-          <strong>{{ card.title }}</strong>
-          <p>{{ card.text }}</p>
-          <div>
-            <button type="button" @click="editHiddenCard(card.id)">編輯</button>
-            <button type="button" @click="removeHiddenCard(card.id)">刪除</button>
-          </div>
-        </article>
-      </div>
-      <p v-else class="hidden-card">卡片還在信封裡，輸入暗號後就能新增和編輯。</p>
+      </template>
     </section>
 
     <section v-show="activeTab === 'memories'" class="photo-wall-section" aria-labelledby="photo-wall-title">

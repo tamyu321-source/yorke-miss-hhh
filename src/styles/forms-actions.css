@@ -168,6 +168,65 @@
   font: inherit;
 }
 
+.secret-code-gate,
+.secret-code-unlocked-panel,
+.secret-code-management {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(36, 48, 71, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 250, 247, 0.68);
+}
+
+.secret-code-lock {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(117, 183, 197, 0.18);
+  color: #417c73;
+  font-size: 1.35rem;
+  font-weight: 950;
+}
+
+.secret-code-gate .secret-code-row,
+.secret-code-management .secret-code-row {
+  margin-top: 0;
+}
+
+.secret-code-status {
+  margin: 0;
+  color: #637084;
+  font-size: 0.9rem;
+  font-weight: 780;
+  line-height: 1.5;
+}
+
+.secret-code-unlocked-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  background: rgba(234, 247, 247, 0.62);
+}
+
+.secret-code-unlocked-panel strong,
+.secret-code-management strong {
+  display: block;
+  color: #243047;
+  font-weight: 950;
+}
+
+.secret-code-unlocked-panel p,
+.secret-code-management p {
+  margin: 4px 0 0;
+  color: #637084;
+  font-size: 0.9rem;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
 .secret-code-list {
   display: flex;
   flex-wrap: wrap;

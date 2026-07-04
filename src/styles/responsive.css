@@ -135,6 +135,10 @@
     grid-template-columns: 1fr;
   }
 
+  .secret-code-unlocked-panel {
+    grid-template-columns: 1fr;
+  }
+
   .checkin-dots {
     gap: 4px;
   }

@@ -441,6 +441,7 @@ const viewportSize = ref({ width: window.innerWidth, height: window.innerHeight 
 const mapWeather = ref<Record<WeatherStationId, MapWeatherSnapshot>>(createFallbackWeatherMap());
 const secretCodeInput = ref('');
 const secretCodeUnlocked = ref(false);
+const secretCodeMessage = ref('');
 const memoryPhotos = ref<MemoryPhoto[]>([]);
 const memoryCapsuleNotes = ref<MemoryCapsuleNote[]>([]);
 const editingCapsuleIndex = ref<number | null>(null);
@@ -2454,31 +2455,64 @@ function mailSecret() {
 
 function unlockSecretCode() {
   const normalized = secretCodeInput.value.trim();
-  if (!secretCodeList.value.includes(normalized)) return;
+  if (!normalized) {
+    secretCodeMessage.value = '先輸入你們約好的暗號。';
+    return;
+  }
+  if (!secretCodeList.value.includes(normalized)) {
+    secretCodeMessage.value = '暗號沒有對上，確認大小寫或換另一個你們約好的詞。';
+    gentleVibrate(8);
+    return;
+  }
   secretCodeUnlocked.value = true;
   localStorage.setItem(storageKey('secret-code'), 'open');
   secretCodeInput.value = '';
-  requestCloudSync('memories');
+  secretCodeMessage.value = '暗號通過，雙人私密區已開啟。';
   playSoftSound('secret');
   gentleVibrate(18);
 }
 
 function loadSecretCode() {
   secretCodeUnlocked.value = localStorage.getItem(storageKey('secret-code')) === 'open';
+  if (secretCodeUnlocked.value) {
+    secretCodeMessage.value = '此裝置已通過暗號，雙人私密區保持開啟。';
+  }
+}
+
+function lockSecretCode() {
+  secretCodeUnlocked.value = false;
+  secretCodeInput.value = '';
+  secretCodeMessage.value = '已重新上鎖，卡片收回信封。';
+  cancelHiddenCardEdit();
+  localStorage.removeItem(storageKey('secret-code'));
+  gentleVibrate(10);
 }
 
 function addCustomSecretCode() {
   const code = newSecretCode.value.trim();
-  if (!code || secretCodeList.value.includes(code)) return;
+  if (!secretCodeUnlocked.value) {
+    secretCodeMessage.value = '先用既有暗號解鎖，再新增新的雙人暗號。';
+    return;
+  }
+  if (!code) {
+    secretCodeMessage.value = '請輸入要新增的暗號。';
+    return;
+  }
+  if (secretCodeList.value.includes(code)) {
+    secretCodeMessage.value = '這個暗號已經存在。';
+    return;
+  }
   customSecretCodes.value = [...customSecretCodes.value, code];
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
   newSecretCode.value = '';
+  secretCodeMessage.value = '新的雙人暗號已加入。';
   requestCloudSync('memories');
 }
 
 function removeCustomSecretCode(code: string) {
   customSecretCodes.value = customSecretCodes.value.filter((item) => item !== code);
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
+  secretCodeMessage.value = '已移除一個自訂暗號。';
   requestCloudSync('memories');
 }
 
@@ -5005,7 +5039,7 @@ provide(appViewContextKey, {
   loadCloudData, loadCustomSecretCodes, loadDailyState, loadJourneyTrips,
   loadMeetingChecklist, loadMeetingMoments, loadMemoryPhotos, loadMoodHistory,
   loadSecretCode, loadSettings, loadSuitcase, loadWishes,
-  localDataMode, localPreviewMode, lockApp, mailSecret,
+  localDataMode, localPreviewMode, lockApp, lockSecretCode, mailSecret,
   meetingChecklist, meetingChecklistItems, meetingChecklistProgress, meetingMomentItems,
   meetingMoments, meetingSummary, meetingSummaryLine, memoryCapsuleNotes, memoryPhotos,
   milestoneFlash, moodBottleDots, moodHistory, moodOptions,
@@ -5042,7 +5076,7 @@ provide(appViewContextKey, {
   ritualComplete, ritualOpened, ritualProgress, ritualSteps,
   routeFillStyle, saveCapsuleNote, saveDailyAnswer, saveDailyMessage, saveHiddenCard, savedMessageLine,
   saveJourneyTrips, saveMemoryPhotos, saveSettings, saveWishes,
-  scanRadar, sceneStyle, sceneTilt, secretCodeInput,
+  scanRadar, sceneStyle, sceneTilt, secretCodeInput, secretCodeMessage,
   secretCodeList, secretCodeUnlocked, secretMailed, secretPressing,
   secretRevealed, secretWhisper, selectedMood, selectedMoodId,
   selectedMoodLine, selectJourneyDay, selectJourneyTrip, selectJourneyTripFromEvent,

@@ -8,20 +8,21 @@ export async function loadStoredPhotos(legacyPhotos: MemoryPhoto[] = []) {
   const stored = await getAllPhotos(db);
   if (stored.length || !legacyPhotos.length) return stored;
 
-  await savePhotos(legacyPhotos);
-  return legacyPhotos;
+  const normalizedLegacyPhotos = normalizePhotos(legacyPhotos);
+  await savePhotos(normalizedLegacyPhotos);
+  return normalizedLegacyPhotos;
 }
 
 export async function savePhotos(photos: MemoryPhoto[]) {
   const db = await openPhotoDb();
   await clearPhotoStore(db);
-  await Promise.all(photos.map((photo) => putPhoto(db, photo)));
+  await Promise.all(normalizePhotos(photos).map((photo) => putPhoto(db, photo)));
 }
 
 export async function mergePhotos(photos: MemoryPhoto[]) {
-  const current = await getAllPhotos(await openPhotoDb());
+  const current = normalizePhotos(await getAllPhotos(await openPhotoDb()));
   const merged = new Map(current.map((photo) => [photo.id, photo]));
-  photos.forEach((photo) => merged.set(photo.id, photo));
+  normalizePhotos(photos).forEach((photo) => merged.set(photo.id, photo));
   await savePhotos([...merged.values()]);
   return [...merged.values()];
 }
@@ -47,7 +48,7 @@ function openPhotoDb(): Promise<IDBDatabase> {
 
 function putPhoto(db: IDBDatabase, photo: MemoryPhoto): Promise<void> {
   return new Promise((resolve, reject) => {
-    const request = db.transaction(PHOTO_STORE_NAME, 'readwrite').objectStore(PHOTO_STORE_NAME).put(photo);
+    const request = db.transaction(PHOTO_STORE_NAME, 'readwrite').objectStore(PHOTO_STORE_NAME).put(toStoredPhoto(photo));
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
@@ -59,4 +60,16 @@ function clearPhotoStore(db: IDBDatabase): Promise<void> {
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+}
+
+function normalizePhotos(photos: MemoryPhoto[]) {
+  return photos.map(toStoredPhoto).filter((photo): photo is MemoryPhoto => Boolean(photo.id && photo.dataUrl));
+}
+
+function toStoredPhoto(photo: Partial<MemoryPhoto> | null | undefined): MemoryPhoto {
+  return {
+    id: String(photo?.id || ''),
+    name: String(photo?.name || '照片'),
+    dataUrl: String(photo?.dataUrl || '')
+  };
 }

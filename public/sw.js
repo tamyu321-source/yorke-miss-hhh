@@ -33,15 +33,31 @@ self.addEventListener('message', (event) => {
   }
 });
 
+function isCacheableResponse(response) {
+  return response && response.status === 200;
+}
+
+function putCache(request, response) {
+  if (!isCacheableResponse(response)) return;
+  caches
+    .open(CACHE_NAME)
+    .then((cache) => cache.put(request, response))
+    .catch(() => undefined);
+}
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  if (event.request.headers.has('range')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(INDEX_URL, copy));
+          putCache(INDEX_URL, response.clone());
           return response;
         })
         .catch(() => caches.match(INDEX_URL))
@@ -55,8 +71,7 @@ self.addEventListener('fetch', (event) => {
 
       return fetch(event.request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          putCache(event.request, response.clone());
           return response;
         })
         .catch(() => caches.match(INDEX_URL));
