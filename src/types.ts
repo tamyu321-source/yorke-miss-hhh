@@ -46,12 +46,50 @@ export type TimelineEvent = {
   dayIndex: number;
 };
 
+export type FlightZoneId =
+  | 'route'
+  | 'sky'
+  | 'sea'
+  | 'tainan'
+  | 'shanghai'
+  | 'harbor'
+  | 'strait'
+  | 'east-sea'
+  | 'taiwan'
+  | 'coast'
+  | 'navigation'
+  | 'memory'
+  | 'countdown';
+
+export type FlightContentZone = 'map' | 'countdown' | 'navigation' | 'today' | 'journey' | 'period' | 'memories' | 'prepare' | 'surface';
+
 export type PlaneDragState = {
   dragging: boolean;
+  returning: boolean;
   startX: number;
   startY: number;
   offsetX: number;
   offsetY: number;
+  screenX: number;
+  screenY: number;
+  homeX: number;
+  homeY: number;
+  zone: FlightZoneId;
+  contentZone: FlightContentZone;
+  lat: number;
+  lon: number;
+};
+
+export type FlightLandingEffect = {
+  id: number;
+  zone: FlightZoneId;
+  contentZone: FlightContentZone;
+  x: number;
+  y: number;
+  label: string;
+  detail: string;
+  lat: number;
+  lon: number;
 };
 
 export type MemoryPhoto = {

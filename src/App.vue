@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, provide, ref, watch, type CSSProperties } from 'vue';
 import { createWorker } from 'tesseract.js';
 import * as XLSX from 'xlsx';
 import { appViewContextKey } from './appViewContext';
@@ -32,6 +32,9 @@ import type {
   BurstParticle,
   CountdownUnit,
   Countdown,
+  FlightContentZone,
+  FlightLandingEffect,
+  FlightZoneId,
   HiddenCardItem,
   JourneyEditableEntryField,
   JourneyImportRow,
@@ -94,6 +97,212 @@ import {
   renumberJourneyDays
 } from './journey/journeyPlanner';
 
+const MAP_VIEWBOX_WIDTH = 320;
+const MAP_VIEWBOX_HEIGHT = 190;
+const mapBounds = {
+  minLon: 116.6,
+  maxLon: 123.4,
+  minLat: 21.5,
+  maxLat: 32.2
+};
+
+type GeoPoint = readonly [lon: number, lat: number];
+
+function projectGeoPoint(lat: number, lon: number, width: number, height: number) {
+  const x = ((lon - mapBounds.minLon) / (mapBounds.maxLon - mapBounds.minLon)) * width;
+  const y = ((mapBounds.maxLat - lat) / (mapBounds.maxLat - mapBounds.minLat)) * height;
+  return {
+    x: Math.round(x * 10) / 10,
+    y: Math.round(y * 10) / 10
+  };
+}
+
+function projectMapPoint(lat: number, lon: number) {
+  return projectGeoPoint(lat, lon, MAP_VIEWBOX_WIDTH, MAP_VIEWBOX_HEIGHT);
+}
+
+function projectGeoPathInBox(points: readonly GeoPoint[], width: number, height: number, close = true) {
+  const commands = points.map(([lon, lat], index) => {
+    const point = projectGeoPoint(lat, lon, width, height);
+    return `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`;
+  });
+  return `${commands.join(' ')}${close ? ' Z' : ''}`;
+}
+
+function projectGeoPath(points: readonly GeoPoint[], close = true) {
+  return projectGeoPathInBox(points, MAP_VIEWBOX_WIDTH, MAP_VIEWBOX_HEIGHT, close);
+}
+
+const mapCityPins = [
+  { id: 'tainan', label: '台南', caption: '22.9999°N, 120.2270°E', lat: 22.9999, lon: 120.2270, kind: 'start' },
+  { id: 'shanghai', label: '上海', caption: '31.2304°N, 121.4737°E', lat: 31.2304, lon: 121.4737, kind: 'end' }
+] as const;
+const mapRouteStops = [
+  { id: 'taiwan-strait', label: '台灣海峽', lat: 24.4, lon: 119.4 },
+  { id: 'east-china-sea', label: '東海', lat: 28.5, lon: 121.9 }
+] as const;
+const chinaCoastPoints: readonly GeoPoint[] = [
+  [116.6, 32.2],
+  [121.9, 32.2],
+  [121.5, 31.3],
+  [121.9, 30.8],
+  [121.2, 30.3],
+  [121.7, 29.8],
+  [121.2, 29.2],
+  [120.8, 28.5],
+  [120.9, 27.7],
+  [120.4, 27.0],
+  [119.8, 26.4],
+  [119.6, 25.9],
+  [119.0, 25.4],
+  [118.3, 24.7],
+  [117.7, 24.1],
+  [117.1, 23.4],
+  [116.6, 22.9],
+  [116.6, 32.2]
+];
+const taiwanOutlinePoints: readonly GeoPoint[] = [
+  [121.88, 25.28],
+  [122.02, 24.92],
+  [121.93, 24.43],
+  [121.75, 23.93],
+  [121.58, 23.42],
+  [121.34, 22.93],
+  [121.08, 22.47],
+  [120.86, 21.98],
+  [120.62, 21.90],
+  [120.42, 22.13],
+  [120.22, 22.58],
+  [120.04, 23.16],
+  [120.10, 23.72],
+  [120.25, 24.18],
+  [120.48, 24.62],
+  [120.78, 24.92],
+  [121.18, 25.15],
+  [121.54, 25.30],
+  [121.88, 25.28]
+];
+const mapLandMasses = [
+  {
+    id: 'china-coast',
+    label: '中國東南沿海',
+    path: projectGeoPath(chinaCoastPoints)
+  },
+  {
+    id: 'taiwan',
+    label: '台灣',
+    path: projectGeoPath(taiwanOutlinePoints)
+  }
+] as const;
+const mapIslandMarkers = [
+  { id: 'penghu', label: '澎湖', radius: 3.2, ...projectMapPoint(23.57, 119.58) },
+  { id: 'kinmen', label: '金門', radius: 2.4, ...projectMapPoint(24.44, 118.32) },
+  { id: 'matsu', label: '馬祖', radius: 2.1, ...projectMapPoint(26.16, 119.95) },
+  { id: 'zhoushan', label: '舟山', radius: 3.0, ...projectMapPoint(30.02, 122.10) }
+] as const;
+
+const mapGridLines = [
+  { id: 'lat-24', d: `M0 ${projectMapPoint(24, mapBounds.minLon).y} H${MAP_VIEWBOX_WIDTH}`, label: '24°N' },
+  { id: 'lat-28', d: `M0 ${projectMapPoint(28, mapBounds.minLon).y} H${MAP_VIEWBOX_WIDTH}`, label: '28°N' },
+  { id: 'lat-32', d: `M0 ${projectMapPoint(32, mapBounds.minLon).y} H${MAP_VIEWBOX_WIDTH}`, label: '32°N' },
+  { id: 'lon-118', d: `M${projectMapPoint(mapBounds.minLat, 118).x} 0 V${MAP_VIEWBOX_HEIGHT}`, label: '118°E' },
+  { id: 'lon-120', d: `M${projectMapPoint(mapBounds.minLat, 120).x} 0 V${MAP_VIEWBOX_HEIGHT}`, label: '120°E' },
+  { id: 'lon-122', d: `M${projectMapPoint(mapBounds.minLat, 122).x} 0 V${MAP_VIEWBOX_HEIGHT}`, label: '122°E' }
+] as const;
+const mapWaterWaveLines = Array.from({ length: 9 }, (_, index) => {
+  const y = 31 + index * 16.5;
+  const offset = index % 2 === 0 ? 7 : -7;
+  return {
+    id: `map-water-wave-${index}`,
+    d: `M-18 ${y} C22 ${y + offset}, 54 ${y - offset}, 94 ${y} S166 ${y + offset}, 212 ${y} S286 ${y - offset}, 338 ${y + offset}`,
+    delay: `${index * 110}ms`
+  };
+});
+const mapRouteStart = projectMapPoint(mapCityPins[0].lat, mapCityPins[0].lon);
+const mapRouteEnd = projectMapPoint(mapCityPins[1].lat, mapCityPins[1].lon);
+const mapRouteControlStart = projectMapPoint(25.1, 120.25);
+const mapRouteControlEnd = projectMapPoint(29.1, 122.15);
+const flightRoutePath = `M${mapRouteStart.x} ${mapRouteStart.y} C${mapRouteControlStart.x} ${mapRouteControlStart.y}, ${mapRouteControlEnd.x} ${mapRouteControlEnd.y}, ${mapRouteEnd.x} ${mapRouteEnd.y}`;
+
+function getRoutePoint(progressValue: number) {
+  const t = clamp(progressValue, 0, 1);
+  const mt = 1 - t;
+  return {
+    x:
+      mt ** 3 * mapRouteStart.x +
+      3 * mt ** 2 * t * mapRouteControlStart.x +
+      3 * mt * t ** 2 * mapRouteControlEnd.x +
+      t ** 3 * mapRouteEnd.x,
+    y:
+      mt ** 3 * mapRouteStart.y +
+      3 * mt ** 2 * t * mapRouteControlStart.y +
+      3 * mt * t ** 2 * mapRouteControlEnd.y +
+      t ** 3 * mapRouteEnd.y
+  };
+}
+
+function toMapPercent(point: { x: number; y: number }) {
+  return {
+    x: (point.x / MAP_VIEWBOX_WIDTH) * 100,
+    y: (point.y / MAP_VIEWBOX_HEIGHT) * 100
+  };
+}
+
+function getMapPointStyle(point: { x: number; y: number }, extra?: CSSProperties): CSSProperties {
+  const percent = toMapPercent(point);
+  return {
+    left: `${percent.x}%`,
+    top: `${percent.y}%`,
+    ...extra
+  };
+}
+
+const flightZoneLabels: Record<FlightZoneId, string> = {
+  route: '回到航線',
+  sky: '高空巡航',
+  sea: '海面低飛',
+  tainan: '台南起飛',
+  shanghai: '城市夜降',
+  harbor: '跑道降落',
+  strait: '海峽穿越',
+  'east-sea': '東海流光',
+  taiwan: '島嶼掠影',
+  coast: '海岸貼飛',
+  navigation: '導航擦撞',
+  memory: '回憶星爆',
+  countdown: '倒數衝擊'
+};
+
+const flightContentLabels: Record<FlightContentZone, string> = {
+  map: '航圖',
+  countdown: '倒數區',
+  navigation: '底部導航',
+  today: '今日頁',
+  journey: '行程頁',
+  period: '週期頁',
+  memories: '回憶頁',
+  prepare: '準備頁',
+  surface: '頁面空域'
+};
+
+function createPlaneDragState(): PlaneDragState {
+  return {
+    dragging: false,
+    returning: false,
+    startX: 0,
+    startY: 0,
+    offsetX: 0,
+    offsetY: 0,
+    screenX: 0,
+    screenY: 0,
+    homeX: 0,
+    homeY: 0,
+    zone: 'route',
+    contentZone: 'surface',
+    lat: mapCityPins[0].lat,
+    lon: mapCityPins[0].lon
+  };
+}
 
 const now = ref(new Date());
 const taskCompleted = ref(false);
@@ -109,7 +318,9 @@ const checkins = ref<string[]>([]);
 const fortuneTitle = ref('');
 const fortuneLine = ref('');
 const moodHistory = ref<string[]>([]);
-const planeDrag = ref<PlaneDragState>({ dragging: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 });
+const planeDrag = ref<PlaneDragState>(createPlaneDragState());
+const flightLandingEffect = ref<FlightLandingEffect | null>(null);
+const viewportSize = ref({ width: window.innerWidth, height: window.innerHeight });
 const secretCodeInput = ref('');
 const secretCodeUnlocked = ref(false);
 const memoryPhotos = ref<MemoryPhoto[]>([]);
@@ -195,6 +406,7 @@ const bgmPlaying = ref(false);
 let timer: number | undefined;
 let secretPressTimer: number | undefined;
 let planeResetTimer: number | undefined;
+let planeReturnTimer: number | undefined;
 let introTimer: number | undefined;
 let passwordSuccessTimer: number | undefined;
 let themeTransitionTimer: number | undefined;
@@ -207,6 +419,7 @@ let deferredInstallPrompt: Event | null = null;
 let refreshingForUpdate = false;
 let sparkleId = 0;
 let burstId = 0;
+let flightLandingId = 0;
 let previousProgressMilestone = 0;
 let lastCloudSnapshot = '';
 let loadingCloudSnapshot = false;
@@ -219,6 +432,7 @@ let bgmDelay: DelayNode | null = null;
 let bgmDelayGain: GainNode | null = null;
 let bgmFeedbackGain: GainNode | null = null;
 let bgmTimer: number | undefined;
+let flightLandingTimer: number | undefined;
 let bgmOscillators: OscillatorNode[] = [];
 let bgmAudio: HTMLAudioElement | null = null;
 let bgmAudioFadeTimer: number | undefined;
@@ -270,20 +484,138 @@ const progress = computed(() => {
   return clamp(elapsed / total, 0, 1);
 });
 const progressPercent = computed(() => Math.round(progress.value * 100));
+const mapCityMarkers = computed(() =>
+  mapCityPins.map((city) => {
+    const point = projectMapPoint(city.lat, city.lon);
+    return {
+      ...city,
+      point,
+      dotStyle: getMapPointStyle(point),
+      labelStyle: getMapPointStyle(point, {
+        transform: city.kind === 'start' ? 'translate(-108%, -96%)' : 'translate(38%, -52%)'
+      })
+    };
+  })
+);
+const mapRouteStopMarkers = computed(() =>
+  mapRouteStops.map((stop) => {
+    const point = projectMapPoint(stop.lat, stop.lon);
+    return {
+      ...stop,
+      style: getMapPointStyle(point, {
+        transform: stop.id === 'taiwan-strait' ? 'translate(-150%, -100%)' : 'translate(130%, 150%)'
+      })
+    };
+  })
+);
+const flightOverlayLandMasses = computed(() =>
+  mapLandMasses.map((land) => ({
+    ...land,
+    path: projectGeoPathInBox(
+      land.id === 'taiwan' ? taiwanOutlinePoints : chinaCoastPoints,
+      viewportSize.value.width,
+      viewportSize.value.height
+    )
+  }))
+);
+const flightOverlayIslandMarkers = computed(() =>
+  mapIslandMarkers.map((island) => ({
+    ...island,
+    ...projectGeoPoint(
+      island.id === 'penghu' ? 23.57 : island.id === 'kinmen' ? 24.44 : island.id === 'matsu' ? 26.16 : 30.02,
+      island.id === 'penghu' ? 119.58 : island.id === 'kinmen' ? 118.32 : island.id === 'matsu' ? 119.95 : 122.1,
+      viewportSize.value.width,
+      viewportSize.value.height
+    ),
+    radius: island.radius + 1.6
+  }))
+);
+const flightOverlayGridLines = computed(() => {
+  const width = viewportSize.value.width;
+  const height = viewportSize.value.height;
+  return [
+    { id: 'lat-24', d: `M0 ${projectGeoPoint(24, mapBounds.minLon, width, height).y} H${width}`, label: '24°N' },
+    { id: 'lat-28', d: `M0 ${projectGeoPoint(28, mapBounds.minLon, width, height).y} H${width}`, label: '28°N' },
+    { id: 'lat-32', d: `M0 ${projectGeoPoint(32, mapBounds.minLon, width, height).y} H${width}`, label: '32°N' },
+    { id: 'lon-118', d: `M${projectGeoPoint(mapBounds.minLat, 118, width, height).x} 0 V${height}`, label: '118°E' },
+    { id: 'lon-120', d: `M${projectGeoPoint(mapBounds.minLat, 120, width, height).x} 0 V${height}`, label: '120°E' },
+    { id: 'lon-122', d: `M${projectGeoPoint(mapBounds.minLat, 122, width, height).x} 0 V${height}`, label: '122°E' }
+  ];
+});
+const flightOverlayCityMarkers = computed(() =>
+  mapCityPins.map((city) => ({
+    ...city,
+    point: projectGeoPoint(city.lat, city.lon, viewportSize.value.width, viewportSize.value.height)
+  }))
+);
+const flightOverlayWaterWaveLines = computed(() => {
+  const width = Math.max(1, viewportSize.value.width);
+  const height = Math.max(1, viewportSize.value.height);
+  const count = Math.max(12, Math.ceil(height / 44));
+  return Array.from({ length: count }, (_, index) => {
+    const y = 24 + index * 42;
+    const amplitude = 11 + (index % 3) * 4;
+    return {
+      id: `flight-water-wave-${index}`,
+      d: `M${width * -0.08} ${y} C${width * 0.12} ${y + amplitude}, ${width * 0.22} ${y - amplitude}, ${width * 0.36} ${y} S${width * 0.62} ${y + amplitude}, ${width * 0.78} ${y} S${width * 1.02} ${y - amplitude}, ${width * 1.08} ${y + amplitude}`,
+      delay: `${index * 90}ms`
+    };
+  });
+});
+const flightOverlayRoutePath = computed(() => {
+  const start = projectGeoPoint(mapCityPins[0].lat, mapCityPins[0].lon, viewportSize.value.width, viewportSize.value.height);
+  const controlStart = projectGeoPoint(25.1, 120.25, viewportSize.value.width, viewportSize.value.height);
+  const controlEnd = projectGeoPoint(29.1, 122.15, viewportSize.value.width, viewportSize.value.height);
+  const end = projectGeoPoint(mapCityPins[1].lat, mapCityPins[1].lon, viewportSize.value.width, viewportSize.value.height);
+  return `M${start.x} ${start.y} C${controlStart.x} ${controlStart.y}, ${controlEnd.x} ${controlEnd.y}, ${end.x} ${end.y}`;
+});
+const flightOverlayViewBox = computed(() => `0 0 ${Math.max(1, viewportSize.value.width)} ${Math.max(1, viewportSize.value.height)}`);
+const activeRoutePoint = computed(() => getRoutePoint(progress.value));
+const activeRoutePercent = computed(() => toMapPercent(activeRoutePoint.value));
+const planeInGlobalFlight = computed(() => planeDrag.value.dragging || planeDrag.value.returning);
+const flightMapClass = computed(() => ({
+  'milestone-wave': milestoneFlash.value,
+  'is-plane-excursion': planeInGlobalFlight.value
+}));
+const planeFlightClass = computed(() => ({
+  dragging: planeDrag.value.dragging,
+  returning: planeDrag.value.returning,
+  'global-flight': planeInGlobalFlight.value,
+  [`zone-${planeDrag.value.zone}`]: true
+}));
+const flightOverlayClass = computed(() => ({
+  [`zone-${planeDrag.value.zone}`]: true,
+  [`content-${planeDrag.value.contentZone}`]: true
+}));
+const planeZoneLabel = computed(() => flightZoneLabels[planeDrag.value.zone]);
+const planeGeoReadout = computed(
+  () =>
+    `${flightZoneLabels[planeDrag.value.zone]} / ${flightContentLabels[planeDrag.value.contentZone]} / ${planeDrag.value.lat.toFixed(2)}°N, ${planeDrag.value.lon.toFixed(2)}°E`
+);
+const planeZoneHintStyle = computed<CSSProperties>(() => ({
+  left: `${planeDrag.value.screenX}px`,
+  top: `${planeDrag.value.screenY}px`
+}));
+const planeHomeStyle = computed(() => ({
+  left: `${activeRoutePercent.value.x}%`,
+  top: `${activeRoutePercent.value.y}%`
+}));
 const planeStyle = computed(() => {
-  const x = 11 + progress.value * 75;
-  const y = 72 - progress.value * 47;
+  if (planeInGlobalFlight.value) {
+    return {
+      left: `${planeDrag.value.screenX}px`,
+      top: `${planeDrag.value.screenY}px`
+    };
+  }
   return {
-    left: `calc(${x}% + ${planeDrag.value.offsetX}px)`,
-    top: `calc(${y}% + ${planeDrag.value.offsetY}px)`
+    left: `calc(${activeRoutePercent.value.x}% + ${planeDrag.value.offsetX}px)`,
+    top: `calc(${activeRoutePercent.value.y}% + ${planeDrag.value.offsetY}px)`
   };
 });
 const planeTrailStyle = computed(() => {
-  const x = 11 + progress.value * 75;
-  const y = 72 - progress.value * 47;
   return {
-    left: `${x}%`,
-    top: `${y}%`,
+    left: `${activeRoutePercent.value.x}%`,
+    top: `${activeRoutePercent.value.y}%`,
     width: `${Math.max(42, progressPercent.value * 1.05)}px`
   };
 });
@@ -1271,9 +1603,15 @@ onMounted(() => {
   checkForAppUpdate();
   window.addEventListener('online', updateOnlineState);
   window.addEventListener('offline', updateOnlineState);
+  window.addEventListener('resize', updateViewportSize);
   window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   window.addEventListener('appinstalled', handleAppInstalled);
   window.addEventListener('pointermove', updateSceneTilt);
+  window.addEventListener('pointermove', movePlaneDrag);
+  window.addEventListener('pointerup', endPlaneDrag);
+  window.addEventListener('pointercancel', endPlaneDrag);
+  window.addEventListener('mousemove', movePlaneMouseDrag);
+  window.addEventListener('mouseup', endPlaneMouseDrag);
   navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange);
   updateInstalledDisplayMode();
   timer = window.setInterval(() => {
@@ -1289,19 +1627,27 @@ onMounted(() => {
 onUnmounted(() => {
   if (timer) window.clearInterval(timer);
   if (planeResetTimer) window.clearTimeout(planeResetTimer);
+  if (planeReturnTimer) window.clearTimeout(planeReturnTimer);
   if (introTimer) window.clearTimeout(introTimer);
   if (passwordSuccessTimer) window.clearTimeout(passwordSuccessTimer);
   if (themeTransitionTimer) window.clearTimeout(themeTransitionTimer);
   if (themePreviewTimer) window.clearTimeout(themePreviewTimer);
   if (milestoneTimer) window.clearTimeout(milestoneTimer);
+  if (flightLandingTimer) window.clearTimeout(flightLandingTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
   stopBackgroundMusic();
   closeAudioContext();
   window.removeEventListener('online', updateOnlineState);
   window.removeEventListener('offline', updateOnlineState);
+  window.removeEventListener('resize', updateViewportSize);
   window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   window.removeEventListener('appinstalled', handleAppInstalled);
   window.removeEventListener('pointermove', updateSceneTilt);
+  window.removeEventListener('pointermove', movePlaneDrag);
+  window.removeEventListener('pointerup', endPlaneDrag);
+  window.removeEventListener('pointercancel', endPlaneDrag);
+  window.removeEventListener('mousemove', movePlaneMouseDrag);
+  window.removeEventListener('mouseup', endPlaneMouseDrag);
   navigator.serviceWorker?.removeEventListener('controllerchange', handleControllerChange);
   cancelSecretPress();
 });
@@ -2684,6 +3030,13 @@ function togglePeriodSelection(target: 'symptom' | 'mood' | 'care', id: string) 
 
 function updateOnlineState() {
   isOnline.value = navigator.onLine;
+}
+
+function updateViewportSize() {
+  viewportSize.value = {
+    width: window.innerWidth,
+    height: window.innerHeight
+  };
 }
 
 function handleBeforeInstallPrompt(event: Event) {
@@ -4072,33 +4425,210 @@ function closeAudioContext() {
   audioContext = null;
 }
 
-function startPlaneDrag(event: PointerEvent) {
+function getGeoFromScreenPoint(clientX: number, clientY: number) {
+  const width = Math.max(viewportSize.value.width, 1);
+  const height = Math.max(viewportSize.value.height, 1);
+  const x = clamp(clientX, 0, width);
+  const y = clamp(clientY, 0, height);
+  const lon = mapBounds.minLon + (x / width) * (mapBounds.maxLon - mapBounds.minLon);
+  const lat = mapBounds.maxLat - (y / height) * (mapBounds.maxLat - mapBounds.minLat);
+  return {
+    lat: Math.round(lat * 10_000) / 10_000,
+    lon: Math.round(lon * 10_000) / 10_000
+  };
+}
+
+function getGeoDistanceKm(left: { lat: number; lon: number }, right: { lat: number; lon: number }) {
+  const latDistance = (right.lat - left.lat) * 111;
+  const lonDistance = (right.lon - left.lon) * 111 * Math.cos(((left.lat + right.lat) / 2 / 180) * Math.PI);
+  return Math.hypot(latDistance, lonDistance);
+}
+
+function isGeoPointInPolygon(point: { lat: number; lon: number }, polygon: readonly GeoPoint[]) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const [currentLon, currentLat] = polygon[index];
+    const [previousLon, previousLat] = polygon[previous];
+    const crosses =
+      currentLat > point.lat !== previousLat > point.lat &&
+      point.lon < ((previousLon - currentLon) * (point.lat - currentLat)) / (previousLat - currentLat) + currentLon;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function getGeoFlightZone(geo: { lat: number; lon: number }): FlightZoneId {
+  if (getGeoDistanceKm(geo, mapCityPins[0]) < 46) return 'tainan';
+  if (getGeoDistanceKm(geo, mapCityPins[1]) < 72) return 'shanghai';
+  if (isGeoPointInPolygon(geo, taiwanOutlinePoints)) return 'taiwan';
+  if (geo.lon <= 119.15 && geo.lat >= 22.6 && geo.lat <= 31.4) return 'coast';
+  if (geo.lon >= 118.6 && geo.lon <= 121.15 && geo.lat >= 22.1 && geo.lat <= 26.4) return 'strait';
+  if (geo.lon >= 120.6 && geo.lat >= 26.3) return 'east-sea';
+  return 'sea';
+}
+
+function isPointInElementRect(selector: string, clientX: number, clientY: number) {
+  const element = document.querySelector(selector);
+  if (!element) return false;
+  const rect = element.getBoundingClientRect();
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+function getFlightContentZone(clientX: number, clientY: number): FlightContentZone {
+  if (isPointInElementRect('.bottom-nav', clientX, clientY)) return 'navigation';
+  if (isPointInElementRect('.flight-map-stage', clientX, clientY)) return 'map';
+  const elements = document.elementsFromPoint(clientX, clientY).filter((element) => {
+    if (!(element instanceof Element)) return false;
+    return !element.closest('.viewport-plane, .flight-zone-hint, .flight-landing-effect, .flight-geo-overlay');
+  });
+  const element = elements.find((item) => item instanceof Element) as Element | undefined;
+  if (!element) return 'surface';
+  if (element.closest('.bottom-nav')) return 'navigation';
+  if (element.closest('.flight-map, .flight-map-stage')) return 'map';
+  if (element.closest('.today-mode-section, .message-section, .question-section, .ritual-section')) return 'today';
+  if (element.closest('.journey-summary-section, .meeting-plan-section, .meeting-checklist-section')) return 'journey';
+  if (element.closest('.period-section, .period-calendar-section, .period-history-section')) return 'period';
+  if (element.closest('.photo-wall-section, .secret-section, .timeline-section')) return 'memories';
+  if (element.closest('.settings-section, .suitcase-section, .prep-section')) return 'prepare';
+  if (element.closest('.hero-section, .flight-section, .countdown-grid, .closeness-panel')) return 'countdown';
+  return 'surface';
+}
+
+function getFlightPointState(clientX: number, clientY: number) {
+  const geo = getGeoFromScreenPoint(clientX, clientY);
+  const contentZone = getFlightContentZone(clientX, clientY);
+  const geoZone = getGeoFlightZone(geo);
+  let zone = geoZone;
+  if (contentZone === 'navigation') zone = 'navigation';
+  else if (contentZone === 'memories') zone = 'memory';
+  else if (contentZone === 'countdown' && geoZone === 'sea') zone = 'countdown';
+  else if (contentZone === 'map' && geoZone === 'sea') zone = 'route';
+  return {
+    zone,
+    contentZone,
+    lat: geo.lat,
+    lon: geo.lon
+  };
+}
+
+function launchLandingEffect(zone: FlightZoneId, x: number, y: number, contentZone: FlightContentZone, lat: number, lon: number) {
+  if (flightLandingTimer) window.clearTimeout(flightLandingTimer);
+  flightLandingEffect.value = {
+    id: flightLandingId++,
+    zone,
+    contentZone,
+    x,
+    y,
+    label: flightZoneLabels[zone],
+    detail: `${flightContentLabels[contentZone]} / ${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E`,
+    lat,
+    lon
+  };
+  gentleVibrate(zone === 'harbor' || zone === 'shanghai' ? 18 : 10);
+  flightLandingTimer = window.setTimeout(() => {
+    flightLandingEffect.value = null;
+    flightLandingTimer = undefined;
+  }, 1500);
+}
+
+function beginPlaneDrag(clientX: number, clientY: number, target: HTMLElement | null) {
+  const rect = target?.getBoundingClientRect();
+  if (!rect) return;
+  if (planeResetTimer) window.clearTimeout(planeResetTimer);
+  if (planeReturnTimer) window.clearTimeout(planeReturnTimer);
+  const homeX = rect.left + rect.width / 2;
+  const homeY = rect.top + rect.height / 2;
+  const pointState = getFlightPointState(homeX, homeY);
   planeDrag.value = {
     dragging: true,
-    startX: event.clientX - planeDrag.value.offsetX,
-    startY: event.clientY - planeDrag.value.offsetY,
-    offsetX: planeDrag.value.offsetX,
-    offsetY: planeDrag.value.offsetY
+    returning: false,
+    startX: clientX - homeX,
+    startY: clientY - homeY,
+    offsetX: 0,
+    offsetY: 0,
+    screenX: homeX,
+    screenY: homeY,
+    homeX,
+    homeY,
+    ...pointState
   };
+}
+
+function movePlaneTo(clientX: number, clientY: number) {
+  const margin = 28;
+  const screenX = clamp(clientX - planeDrag.value.startX, margin, Math.max(margin, window.innerWidth - margin));
+  const screenY = clamp(clientY - planeDrag.value.startY, margin, Math.max(margin, window.innerHeight - margin));
+  const pointState = getFlightPointState(screenX, screenY);
+  planeDrag.value = {
+    ...planeDrag.value,
+    screenX,
+    screenY,
+    ...pointState
+  };
+}
+
+function startPlaneDrag(event: PointerEvent) {
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  event.preventDefault();
+  target?.setPointerCapture?.(event.pointerId);
+  beginPlaneDrag(event.clientX, event.clientY, target);
+}
+
+function startPlaneMouseDrag(event: MouseEvent) {
+  if (planeDrag.value.dragging || event.button !== 0) return;
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  event.preventDefault();
+  beginPlaneDrag(event.clientX, event.clientY, target);
 }
 
 function movePlaneDrag(event: PointerEvent) {
   if (!planeDrag.value.dragging) return;
-  planeDrag.value = {
-    ...planeDrag.value,
-    offsetX: clamp(event.clientX - planeDrag.value.startX, -46, 46),
-    offsetY: clamp(event.clientY - planeDrag.value.startY, -36, 36)
-  };
+  event.preventDefault();
+  movePlaneTo(event.clientX, event.clientY);
 }
 
-function endPlaneDrag() {
+function movePlaneMouseDrag(event: MouseEvent) {
   if (!planeDrag.value.dragging) return;
-  planeDrag.value = { ...planeDrag.value, dragging: false };
+  event.preventDefault();
+  movePlaneTo(event.clientX, event.clientY);
+}
+
+function endPlaneDrag(event?: PointerEvent) {
+  if (!planeDrag.value.dragging) return;
+  const target = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  if (event && target?.hasPointerCapture?.(event.pointerId)) {
+    target.releasePointerCapture(event.pointerId);
+  }
+  const landingX = planeDrag.value.screenX;
+  const landingY = planeDrag.value.screenY;
+  const landingZone = planeDrag.value.zone;
+  const landingContentZone = planeDrag.value.contentZone;
+  const landingLat = planeDrag.value.lat;
+  const landingLon = planeDrag.value.lon;
+  launchLandingEffect(landingZone, landingX, landingY, landingContentZone, landingLat, landingLon);
+  planeDrag.value = { ...planeDrag.value, dragging: false, returning: true, screenX: landingX, screenY: landingY };
   gentleVibrate(6);
   if (planeResetTimer) window.clearTimeout(planeResetTimer);
+  if (planeReturnTimer) window.clearTimeout(planeReturnTimer);
+  planeReturnTimer = window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      planeDrag.value = {
+        ...planeDrag.value,
+        screenX: planeDrag.value.homeX,
+        screenY: planeDrag.value.homeY,
+        zone: 'route',
+        contentZone: 'map'
+      };
+    });
+    planeReturnTimer = undefined;
+  }, 180);
   planeResetTimer = window.setTimeout(() => {
-    planeDrag.value = { dragging: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 };
-  }, 450);
+    planeDrag.value = createPlaneDragState();
+  }, 1_170);
+}
+
+function endPlaneMouseDrag() {
+  endPlaneDrag();
 }
 
 function openThemeSettings() {
@@ -4215,6 +4745,11 @@ provide(appViewContextKey, {
   packingItems, parseJourneyRowsFromImage, parseJourneyRowsFromSpreadsheetFile, passwordBusy,
   passwordInput, passwordStatus, passwordSuccess, pendingImport,
   pendingImportSummary, photoFilmstrip, planeDrag, planeStyle,
+  activeRoutePercent, flightLandingEffect, flightMapClass, flightOverlayCityMarkers,
+  flightOverlayClass, flightOverlayGridLines, flightOverlayIslandMarkers, flightOverlayLandMasses,
+  flightOverlayRoutePath, flightOverlayViewBox, flightOverlayWaterWaveLines, flightRoutePath,
+  mapCityMarkers, mapGridLines, mapIslandMarkers, mapLandMasses,
+  mapRouteStopMarkers, mapWaterWaveLines, planeFlightClass, planeGeoReadout, planeHomeStyle, planeInGlobalFlight, planeZoneHintStyle, planeZoneLabel,
   periodAnomalyAlerts, periodCalendarOffset, periodCalendarRangeLabel,
   periodCareOptions, periodCareSuggestionCards, periodConfidenceLabel, periodCycleStats, periodDisplayName,
   periodPrivacyMode, periodRecordFormTitle, periodRecordSubmitLabel, periodReminderCards,
@@ -4240,7 +4775,7 @@ provide(appViewContextKey, {
   selectedMoodLine, selectJourneyDay, selectJourneyTrip, selectJourneyTripFromEvent,
   selectMood, setSettingsUpdatedAt, settings, settingsDraft,
   shareCopied, showPasswordInstallHint, sparkles, startCloudSyncLoop,
-  shiftPeriodCalendar, startDateLabel, startEditPeriodRecord, startOpeningSequence, startPlaneDrag, startSecretPress,
+  shiftPeriodCalendar, startDateLabel, startEditPeriodRecord, startOpeningSequence, startPlaneDrag, startPlaneMouseDrag, startSecretPress,
   startEditCapsule,
   suitcaseChecked, suitcaseItems, suitcaseProgress, syncCloudNow,
   targetDate, targetDateLabel, targetDateShortLabel, targetDayStart,

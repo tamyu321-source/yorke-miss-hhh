@@ -593,6 +593,239 @@
   }
 }
 
+@keyframes ocean-current {
+  from {
+    transform: translate3d(-18px, -8px, 0) rotate(0deg);
+  }
+
+  to {
+    transform: translate3d(18px, 8px, 0) rotate(0.001deg);
+  }
+}
+
+@keyframes ocean-shimmer {
+  from {
+    opacity: 0.26;
+    transform: translate3d(-10px, 6px, 0);
+  }
+
+  to {
+    opacity: 0.62;
+    transform: translate3d(14px, -8px, 0);
+  }
+}
+
+@keyframes geo-overlay-arrive {
+  from {
+    opacity: 0;
+    transform: scale(1.015);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes full-map-current {
+  from {
+    transform: translate3d(-30px, -18px, 0);
+  }
+
+  to {
+    transform: translate3d(30px, 18px, 0);
+  }
+}
+
+@keyframes full-map-glow {
+  from {
+    opacity: 0.42;
+    transform: translateX(-14px);
+  }
+
+  to {
+    opacity: 0.84;
+    transform: translateX(14px);
+  }
+}
+
+@keyframes water-wave-drift {
+  from {
+    stroke-dashoffset: 0;
+    transform: translateX(-8px);
+  }
+
+  to {
+    stroke-dashoffset: -42;
+    transform: translateX(10px);
+  }
+}
+
+@keyframes geo-plane-pulse {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.58);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
+@keyframes plane-engine-rattle {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(-19deg) scale(1);
+  }
+
+  35% {
+    transform: translate(-50%, -51%) rotate(-16deg) scale(1.04);
+  }
+
+  70% {
+    transform: translate(-50%, -49%) rotate(-21deg) scale(0.99);
+  }
+}
+
+@keyframes plane-return-swoop {
+  0% {
+    filter: drop-shadow(0 0 20px rgba(246, 200, 111, 0.36)) drop-shadow(0 20px 22px rgba(36, 48, 71, 0.22));
+    transform: translate(-50%, -50%) rotate(-30deg) scale(1.1);
+  }
+
+  38% {
+    filter: drop-shadow(0 0 28px rgba(117, 183, 197, 0.46)) drop-shadow(0 24px 24px rgba(36, 48, 71, 0.25));
+    transform: translate(-50%, -50%) rotate(14deg) scale(1.22);
+  }
+
+  72% {
+    transform: translate(-50%, -50%) rotate(-24deg) scale(0.94);
+  }
+
+  100% {
+    filter: drop-shadow(0 10px 10px rgba(36, 48, 71, 0.18));
+    transform: translate(-50%, -50%) rotate(-18deg) scale(1);
+  }
+}
+
+@keyframes plane-zone-wake {
+  0%,
+  100% {
+    opacity: 0.64;
+    transform: translate(-116px, -2px) rotate(-12deg) scaleX(0.72);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-128px, -2px) rotate(-12deg) scaleX(1.18);
+  }
+}
+
+@keyframes plane-zone-ring {
+  from {
+    opacity: 0.62;
+    transform: translate(-50%, -50%) scale(0.62);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.8);
+  }
+}
+
+@keyframes landing-effect-ring {
+  from {
+    opacity: 0.84;
+    transform: scale(0.36);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.85);
+  }
+}
+
+@keyframes landing-effect-fade {
+  0%,
+  68% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes landing-effect-core {
+  from {
+    opacity: 0.9;
+    transform: scale(0.62);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+
+@keyframes landing-effect-shadow {
+  from {
+    opacity: 0.82;
+    transform: translateY(23px) scaleX(0.58);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(23px) scaleX(1.42);
+  }
+}
+
+@keyframes impact-spark-burst {
+  0% {
+    opacity: 0;
+    transform: rotate(-24deg) scale(0.36);
+  }
+
+  18% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: rotate(42deg) scale(1.45);
+  }
+}
+
+@keyframes impact-sonar-ring {
+  from {
+    opacity: 0.72;
+    transform: scale(0.48);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.68);
+  }
+}
+
+@keyframes impact-label-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.82);
+  }
+
+  55% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.08);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes polaroid-drop {
   0% {
     opacity: 0;
