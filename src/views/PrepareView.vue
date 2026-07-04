@@ -69,7 +69,6 @@ export default createContextViewComponent('PrepareView');
           {{ theme.label }}
         </button>
       </div>
-      <p v-if="themePreviewing" class="theme-preview-note">預覽中，保存後才會固定使用這個主題。</p>
       <label class="toggle-row">
         <input v-model="settingsDraft.reducedMotion" type="checkbox" />
         <span>減少動畫</span>

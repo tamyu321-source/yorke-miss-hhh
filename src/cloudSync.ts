@@ -2,6 +2,16 @@ import type { AppExportData } from './backup';
 
 const CLOUD_API_URL = (import.meta.env.VITE_CLOUD_API_URL ?? '').replace(/\/$/, '');
 const CLOUD_SESSION_KEY = 'count-to-814:cloud-session';
+const APP_STORAGE_PREFIX = 'first-meeting:';
+
+export type CloudFeature = 'settings' | 'today' | 'prepare' | 'memories' | 'wishes' | 'period' | 'journey' | 'misc';
+
+type CloudFeaturePayload = {
+  schemaVersion: number;
+  exportedAt: string;
+  localStorage: Record<string, string>;
+  photos?: AppExportData['photos'];
+};
 
 type SessionResponse = {
   token: string;
@@ -9,6 +19,57 @@ type SessionResponse = {
 
 type StateResponse = {
   data: AppExportData | null;
+};
+
+type FeatureResponse = {
+  data: CloudFeaturePayload | null;
+};
+
+const CLOUD_FEATURES: CloudFeature[] = [
+  'settings',
+  'today',
+  'prepare',
+  'memories',
+  'wishes',
+  'period',
+  'journey',
+  'misc'
+];
+
+const CLOUD_FEATURE_PATHS: Record<CloudFeature, string> = {
+  settings: '/api/settings',
+  today: '/api/today',
+  prepare: '/api/prepare',
+  memories: '/api/memories',
+  wishes: '/api/wishes',
+  period: '/api/period',
+  journey: '/api/journey',
+  misc: '/api/misc'
+};
+
+const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
+  settings: ['settings', 'settings-updated-at', 'onboarding-seen', 'intro-seen'],
+  today: [
+    'task',
+    'message',
+    'mood',
+    'secret',
+    'secret-mailed',
+    'fortune-title',
+    'fortune-line',
+    'question-answer',
+    'radar-choice',
+    'ritual-opened',
+    'ritual-complete',
+    'today-updated-at',
+    'checkins',
+    'mood-history'
+  ],
+  prepare: ['suitcase', 'secret-code', 'custom-secret-codes', 'meeting-checklist'],
+  memories: ['meeting-moments'],
+  wishes: ['wishes'],
+  period: ['period-records', 'period-privacy-mode'],
+  journey: ['journey-trips', 'active-journey-trip']
 };
 
 export function isCloudSyncConfigured() {
@@ -37,19 +98,126 @@ export async function requestCloudSession(password: string) {
 }
 
 export async function fetchCloudState(token: string) {
-  const response = await cloudFetch<StateResponse>('/api/state', {
-    method: 'GET',
-    token
-  });
-  return response.data;
+  let legacyData: AppExportData | null = null;
+
+  try {
+    const response = await cloudFetch<StateResponse>('/api/state', {
+      method: 'GET',
+      token
+    });
+    legacyData = response.data;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  try {
+    const responses = await Promise.all(
+      CLOUD_FEATURES.map(async (feature) => {
+        const response = await cloudFetch<FeatureResponse>(CLOUD_FEATURE_PATHS[feature], {
+          method: 'GET',
+          token
+        });
+        return [feature, response.data] as const;
+      })
+    );
+    const featureData = Object.fromEntries(responses) as Partial<Record<CloudFeature, CloudFeaturePayload | null>>;
+    if (Object.values(featureData).some(Boolean)) {
+      return mergeFeaturePayloads(featureData, legacyData);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  return legacyData;
 }
 
-export async function saveCloudState(token: string, data: AppExportData) {
-  await cloudFetch('/api/state', {
-    method: 'PUT',
-    token,
-    body: JSON.stringify({ data })
+export async function saveCloudState(token: string, data: AppExportData, features?: CloudFeature[]) {
+  const payloads = partitionCloudState(data);
+  const featuresToSave = features?.length ? Array.from(new Set(features)) : CLOUD_FEATURES;
+
+  try {
+    await Promise.all(
+      featuresToSave.map((feature) =>
+        cloudFetch(CLOUD_FEATURE_PATHS[feature], {
+          method: 'PUT',
+          token,
+          body: JSON.stringify({ data: payloads[feature] })
+        })
+      )
+    );
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    await cloudFetch('/api/state', {
+      method: 'PUT',
+      token,
+      body: JSON.stringify({ data })
+    });
+  }
+}
+
+function partitionCloudState(data: AppExportData): Record<CloudFeature, CloudFeaturePayload> {
+  const createdAt = new Date().toISOString();
+  const payloads = Object.fromEntries(
+    CLOUD_FEATURES.map((feature) => [
+      feature,
+      {
+        schemaVersion: data.schemaVersion,
+        exportedAt: data.exportedAt || createdAt,
+        localStorage: {}
+      }
+    ])
+  ) as Record<CloudFeature, CloudFeaturePayload>;
+
+  Object.entries(data.localStorage).forEach(([key, value]) => {
+    payloads[classifyStorageKey(key)].localStorage[key] = value;
   });
+
+  payloads.memories.photos = data.photos;
+  return payloads;
+}
+
+function mergeFeaturePayloads(
+  payloads: Partial<Record<CloudFeature, CloudFeaturePayload | null>>,
+  base: AppExportData | null = null
+): AppExportData {
+  const localStorage: Record<string, string> = { ...(base?.localStorage ?? {}) };
+  let schemaVersion = base?.schemaVersion ?? 2;
+  let exportedAt = base?.exportedAt ?? '';
+  let photos = base?.photos ?? [];
+
+  CLOUD_FEATURES.forEach((feature) => {
+    const payload = payloads[feature];
+    if (!payload) return;
+
+    schemaVersion = Math.max(schemaVersion, payload.schemaVersion || 2);
+    if (!exportedAt || payload.exportedAt > exportedAt) exportedAt = payload.exportedAt;
+    Object.assign(localStorage, payload.localStorage);
+    if (feature === 'memories') {
+      photos = payload.photos ?? [];
+    }
+  });
+
+  return {
+    schemaVersion,
+    exportedAt: exportedAt || new Date().toISOString(),
+    localStorage,
+    photos
+  };
+}
+
+function classifyStorageKey(key: string): CloudFeature {
+  if (!key.startsWith(APP_STORAGE_PREFIX)) return 'misc';
+
+  const kind = key.slice(APP_STORAGE_PREFIX.length).split(':')[0] ?? '';
+  for (const [feature, kinds] of Object.entries(FEATURE_KINDS) as Array<[Exclude<CloudFeature, 'misc'>, string[]]>) {
+    if (kinds.includes(kind)) return feature;
+  }
+
+  return kind === 'memory-photos' ? 'memories' : 'misc';
+}
+
+function isNotFoundError(error: unknown) {
+  return error instanceof Error && error.message.startsWith('Cloud request failed: 404');
 }
 
 async function cloudFetch<T = unknown>(

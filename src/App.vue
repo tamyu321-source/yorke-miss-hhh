@@ -14,7 +14,8 @@ import {
   isCloudSyncConfigured,
   requestCloudSession,
   restoreCloudSession,
-  saveCloudState
+  saveCloudState,
+  type CloudFeature
 } from './cloudSync';
 import { loadStoredPhotos, mergePhotos, savePhotos } from './photoDb';
 import { checkForAppUpdate as checkServiceWorkerUpdate, refreshForWaitingServiceWorker } from './pwa';
@@ -192,6 +193,7 @@ let themePreviewTimer: number | undefined;
 let milestoneTimer: number | undefined;
 let cloudSyncTimer: number | undefined;
 let pendingCloudSync = false;
+let pendingCloudFeatures = new Set<CloudFeature>();
 let deferredInstallPrompt: Event | null = null;
 let refreshingForUpdate = false;
 let sparkleId = 0;
@@ -212,6 +214,21 @@ let bgmOscillators: OscillatorNode[] = [];
 let bgmAudio: HTMLAudioElement | null = null;
 let bgmAudioFadeTimer: number | undefined;
 let themeStingerAudio: HTMLAudioElement | null = null;
+
+const TODAY_UPDATED_KIND = 'today-updated-at';
+const TODAY_STORAGE_KINDS = [
+  'task',
+  'message',
+  'mood',
+  'secret',
+  'secret-mailed',
+  'fortune-title',
+  'fortune-line',
+  'question-answer',
+  'radar-choice',
+  'ritual-opened',
+  'ritual-complete'
+];
 
 const todayStart = computed(() => startOfDay(now.value));
 const configuredStartDate = computed(() => {
@@ -1341,10 +1358,18 @@ async function loadCloudData() {
         const localSettings = localStorage.getItem(storageKey('settings'));
         const localSettingsUpdatedAt = getLocalSettingsUpdatedAt();
         const cloudSettingsUpdatedAt = getCloudSettingsUpdatedAt(cloudData);
+        const localTodayKey = dateKey.value;
+        const localTodayState = captureLocalTodayState(localTodayKey);
+        const localTodayUpdatedAt = getLocalTodayUpdatedAt(localTodayKey);
+        const cloudTodayUpdatedAt = getCloudTodayUpdatedAt(cloudData, localTodayKey);
         restoreAppLocalStorage(cloudData.localStorage, 'replace');
         if (localSettings && localSettingsUpdatedAt > cloudSettingsUpdatedAt) {
           localStorage.setItem(storageKey('settings'), localSettings);
           setSettingsUpdatedAt(localSettingsUpdatedAt);
+          shouldPushLocalAfterCloudLoad = true;
+        }
+        if (localTodayUpdatedAt > cloudTodayUpdatedAt) {
+          restoreLocalTodayState(localTodayState);
           shouldPushLocalAfterCloudLoad = true;
         }
         memoryPhotos.value = cloudData.photos;
@@ -1391,40 +1416,61 @@ function startCloudSyncLoop() {
   }, 900);
 }
 
-async function syncCloudNow(force = false) {
+async function syncCloudNow(force = false, requestedFeatures?: CloudFeature[]) {
   if (!cloudToken.value || loadingCloudSnapshot) return;
   if (cloudSyncBusy.value) {
     pendingCloudSync = pendingCloudSync || force;
+    addPendingCloudFeatures(requestedFeatures);
     return;
   }
 
   const snapshot = getComparableCloudSnapshot();
   if (!force && snapshot === lastCloudSnapshot) return;
+  const featuresToSync = getCloudFeaturesToSync(requestedFeatures);
+  pendingCloudFeatures.clear();
 
   cloudSyncBusy.value = true;
   cloudStatus.value = '正在同步雲端...';
 
   try {
-    await saveCloudState(cloudToken.value, createExportData(memoryPhotos.value));
+    await saveCloudState(cloudToken.value, createExportData(memoryPhotos.value), featuresToSync);
     localDataMode.value = false;
     lastCloudSnapshot = snapshot;
     cloudStatus.value = `已同步 ${new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`;
   } catch {
+    addPendingCloudFeatures(featuresToSync);
     cloudStatus.value = '同步失敗，稍後會再試一次';
   } finally {
     cloudSyncBusy.value = false;
     if (pendingCloudSync) {
       pendingCloudSync = false;
       window.setTimeout(() => {
-        void syncCloudNow(true);
+        void syncCloudNow(true, pendingCloudFeatures.size ? [...pendingCloudFeatures] : undefined);
       }, 0);
     }
   }
 }
 
-function requestCloudSync() {
+function requestCloudSync(features?: CloudFeature | CloudFeature[]) {
   if (localDataMode.value) return;
-  void syncCloudNow(true);
+  const requestedFeatures = normalizeCloudFeatures(features);
+  void syncCloudNow(true, requestedFeatures);
+}
+
+function normalizeCloudFeatures(features?: CloudFeature | CloudFeature[]) {
+  if (!features) return undefined;
+  return Array.isArray(features) ? features : [features];
+}
+
+function addPendingCloudFeatures(features?: CloudFeature[]) {
+  if (!features) return;
+  features.forEach((feature) => pendingCloudFeatures.add(feature));
+}
+
+function getCloudFeaturesToSync(requestedFeatures?: CloudFeature[]) {
+  const combined = new Set<CloudFeature>(pendingCloudFeatures);
+  requestedFeatures?.forEach((feature) => combined.add(feature));
+  return combined.size ? [...combined] : undefined;
 }
 
 function getComparableCloudSnapshot() {
@@ -1439,6 +1485,10 @@ function setSettingsUpdatedAt(timestamp = Date.now()) {
   localStorage.setItem(storageKey(SETTINGS_UPDATED_KIND), String(timestamp));
 }
 
+function setTodayUpdatedAt(key = dateKey.value, timestamp = Date.now()) {
+  localStorage.setItem(storageKey(TODAY_UPDATED_KIND, key), String(timestamp));
+}
+
 function getLocalSettingsUpdatedAt() {
   return getStorageTimestamp(localStorage.getItem(storageKey(SETTINGS_UPDATED_KIND)));
 }
@@ -1447,9 +1497,39 @@ function getCloudSettingsUpdatedAt(data: AppExportData) {
   return getStorageTimestamp(data.localStorage[storageKey(SETTINGS_UPDATED_KIND)]);
 }
 
+function getLocalTodayUpdatedAt(key = dateKey.value) {
+  return getStorageTimestamp(localStorage.getItem(storageKey(TODAY_UPDATED_KIND, key)));
+}
+
+function getCloudTodayUpdatedAt(data: AppExportData, key = dateKey.value) {
+  return getStorageTimestamp(data.localStorage[storageKey(TODAY_UPDATED_KIND, key)]);
+}
+
 function getStorageTimestamp(value: string | null | undefined) {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function captureLocalTodayState(key: string) {
+  const localStorageEntries: Record<string, string | null> = {};
+  [...TODAY_STORAGE_KINDS, TODAY_UPDATED_KIND].forEach((kind) => {
+    const storageName = storageKey(kind, key);
+    localStorageEntries[storageName] = localStorage.getItem(storageName);
+  });
+  [storageKey('checkins'), storageKey('mood-history')].forEach((storageName) => {
+    localStorageEntries[storageName] = localStorage.getItem(storageName);
+  });
+  return localStorageEntries;
+}
+
+function restoreLocalTodayState(entries: Record<string, string | null>) {
+  Object.entries(entries).forEach(([key, value]) => {
+    if (value === null) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, value);
+  });
 }
 
 function lockApp() {
@@ -1472,7 +1552,8 @@ function toggleTask() {
 
   if (taskCompleted.value) {
     localStorage.setItem(key, 'done');
-    requestCloudSync();
+    setTodayUpdatedAt();
+    requestCloudSync('today');
     launchThemeBurst();
     playSoftSound('success');
     gentleVibrate(12);
@@ -1480,7 +1561,8 @@ function toggleTask() {
   }
 
   localStorage.removeItem(key);
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
 }
 
 function loadDailyState(key: string) {
@@ -1507,27 +1589,31 @@ function saveDailyMessage() {
   if (message) {
     localStorage.setItem(storageKey('message', dateKey.value), message);
     dailyMessage.value = message;
-    requestCloudSync();
+    setTodayUpdatedAt();
+    requestCloudSync('today');
     gentleVibrate(10);
     return;
   }
 
   localStorage.removeItem(storageKey('message', dateKey.value));
   dailyMessage.value = '';
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
 }
 
 function clearDailyMessage() {
   localStorage.removeItem(storageKey('message', dateKey.value));
   dailyMessage.value = '';
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
 }
 
 function selectMood(moodId: string) {
   selectedMoodId.value = moodId;
   localStorage.setItem(storageKey('mood', dateKey.value), moodId);
   addMoodHistory(moodId);
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   gentleVibrate(8);
 }
 
@@ -1546,7 +1632,7 @@ function toggleSuitcaseItem(item: string) {
     packingItems.value = packingItems.value.filter((value) => value !== item);
   }, 620);
   localStorage.setItem(storageKey('suitcase'), JSON.stringify(suitcaseChecked.value));
-  requestCloudSync();
+  requestCloudSync('prepare');
   gentleVibrate(8);
 }
 
@@ -1568,7 +1654,8 @@ function checkInToday() {
   if (checkedInToday.value) return;
   checkins.value = [...checkins.value, dateKey.value].sort();
   localStorage.setItem(storageKey('checkins'), JSON.stringify(checkins.value));
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   launchThemeBurst();
   playSoftSound('success');
   gentleVibrate(16);
@@ -1595,7 +1682,8 @@ function drawFortune() {
   fortuneLine.value = fortune.line;
   localStorage.setItem(storageKey('fortune-title', dateKey.value), fortune.title);
   localStorage.setItem(storageKey('fortune-line', dateKey.value), fortune.line);
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   gentleVibrate(14);
 }
 
@@ -1686,7 +1774,8 @@ function scanRadar() {
 function chooseRadar(choiceId: string) {
   radarChoiceId.value = choiceId;
   localStorage.setItem(storageKey('radar-choice', dateKey.value), choiceId);
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   playSoftSound('radar');
   gentleVibrate(14);
 }
@@ -1710,7 +1799,8 @@ function cancelSecretPress() {
 function revealSecret() {
   secretRevealed.value = true;
   localStorage.setItem(storageKey('secret', dateKey.value), 'open');
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   cancelSecretPress();
   launchThemeBurst();
   playSoftSound('secret');
@@ -1721,7 +1811,8 @@ function mailSecret() {
   if (!secretRevealed.value || secretMailed.value) return;
   secretMailed.value = true;
   localStorage.setItem(storageKey('secret-mailed', dateKey.value), 'yes');
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   playSoftSound('paper');
   gentleVibrate(12);
 }
@@ -1731,7 +1822,7 @@ function unlockSecretCode() {
   if (!secretCodeList.value.includes(normalized)) return;
   secretCodeUnlocked.value = true;
   localStorage.setItem(storageKey('secret-code'), 'open');
-  requestCloudSync();
+  requestCloudSync('prepare');
   playSoftSound('secret');
   gentleVibrate(18);
 }
@@ -1746,13 +1837,13 @@ function addCustomSecretCode() {
   customSecretCodes.value = [...customSecretCodes.value, code];
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
   newSecretCode.value = '';
-  requestCloudSync();
+  requestCloudSync('prepare');
 }
 
 function removeCustomSecretCode(code: string) {
   customSecretCodes.value = customSecretCodes.value.filter((item) => item !== code);
   localStorage.setItem(storageKey('custom-secret-codes'), JSON.stringify(customSecretCodes.value));
-  requestCloudSync();
+  requestCloudSync('prepare');
 }
 
 function loadCustomSecretCodes() {
@@ -1774,19 +1865,23 @@ function saveDailyAnswer() {
   if (answer) {
     dailyAnswer.value = answer;
     localStorage.setItem(storageKey('question-answer', dateKey.value), answer);
-    requestCloudSync();
+    setTodayUpdatedAt();
+    requestCloudSync('today');
     gentleVibrate(10);
     return;
   }
 
   localStorage.removeItem(storageKey('question-answer', dateKey.value));
-  requestCloudSync();
+  dailyAnswer.value = '';
+  setTodayUpdatedAt();
+  requestCloudSync('today');
 }
 
 function clearDailyAnswer() {
   dailyAnswer.value = '';
   localStorage.removeItem(storageKey('question-answer', dateKey.value));
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
 }
 
 function addMemoryPhotos(event: Event) {
@@ -1824,7 +1919,7 @@ function removeMemoryPhoto(id: string) {
 
 async function saveMemoryPhotos() {
   await savePhotos(memoryPhotos.value);
-  requestCloudSync();
+  requestCloudSync('memories');
 }
 
 async function loadMemoryPhotos() {
@@ -1856,7 +1951,7 @@ function toggleMeetingChecklist(item: string) {
   }
   meetingChecklist.value = Array.from(checked);
   localStorage.setItem(storageKey('meeting-checklist'), JSON.stringify(meetingChecklist.value));
-  requestCloudSync();
+  requestCloudSync('prepare');
   gentleVibrate(10);
 }
 
@@ -1936,35 +2031,25 @@ function reloadPersistentState() {
 }
 
 function resetToday() {
-  [
-    'task',
-    'message',
-    'mood',
-    'secret',
-    'secret-mailed',
-    'fortune-title',
-    'fortune-line',
-    'question-answer',
-    'radar-choice',
-    'ritual-opened',
-    'ritual-complete'
-  ].forEach((kind) => localStorage.removeItem(storageKey(kind, dateKey.value)));
+  TODAY_STORAGE_KINDS.forEach((kind) => localStorage.removeItem(storageKey(kind, dateKey.value)));
   checkins.value = checkins.value.filter((day) => day !== dateKey.value);
   moodHistory.value = moodHistory.value.filter((entry) => !entry.startsWith(`${dateKey.value}:`));
   localStorage.setItem(storageKey('checkins'), JSON.stringify(checkins.value));
   localStorage.setItem(storageKey('mood-history'), JSON.stringify(moodHistory.value));
+  setTodayUpdatedAt();
   if (isMeetingDay.value) {
     meetingChecklist.value = [];
     localStorage.removeItem(storageKey('meeting-checklist'));
   }
   loadDailyState(dateKey.value);
-  requestCloudSync();
+  requestCloudSync(isMeetingDay.value ? ['today', 'prepare'] : 'today');
 }
 
 function openTodayRitual() {
   ritualOpened.value = true;
   localStorage.setItem(storageKey('ritual-opened', dateKey.value), 'yes');
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   gentleVibrate(10);
 }
 
@@ -1972,7 +2057,8 @@ function completeTodayRitual() {
   if (ritualProgress.value < 100) return;
   ritualComplete.value = true;
   localStorage.setItem(storageKey('ritual-complete', dateKey.value), 'yes');
-  requestCloudSync();
+  setTodayUpdatedAt();
+  requestCloudSync('today');
   launchSparkles();
   playSoftSound('success');
 }
@@ -2014,7 +2100,7 @@ function saveSettings() {
       themeTransition.value = false;
     }, 900);
   }
-  requestCloudSync();
+  requestCloudSync('settings');
   gentleVibrate(10);
 }
 
@@ -2024,7 +2110,7 @@ function resetSettings() {
   previewTheme.value = '';
   localStorage.removeItem(storageKey('settings'));
   setSettingsUpdatedAt();
-  requestCloudSync();
+  requestCloudSync('settings');
 }
 
 function previewThemeSelection(theme: ThemeId) {
@@ -2043,7 +2129,7 @@ function previewThemeSelection(theme: ThemeId) {
   themeTransitionTimer = window.setTimeout(() => {
     themeTransition.value = false;
   }, 900);
-  requestCloudSync();
+  requestCloudSync('settings');
   playThemeSwitchMotif(theme);
   gentleVibrate(8);
 }
@@ -2051,7 +2137,7 @@ function previewThemeSelection(theme: ThemeId) {
 function dismissOnboarding() {
   onboardingVisible.value = false;
   localStorage.setItem(storageKey('onboarding-seen'), 'yes');
-  requestCloudSync();
+  requestCloudSync('settings');
 }
 
 function dismissUpdateToast() {
@@ -2119,7 +2205,7 @@ function removeWish(id: string) {
 
 function saveWishes() {
   localStorage.setItem(storageKey('wishes'), JSON.stringify(wishes.value));
-  requestCloudSync();
+  requestCloudSync('wishes');
 }
 
 function loadWishes() {
@@ -2150,7 +2236,7 @@ function toggleMeetingMoment(id: string) {
   }
   meetingMoments.value = Array.from(selected);
   localStorage.setItem(storageKey('meeting-moments'), JSON.stringify(meetingMoments.value));
-  requestCloudSync();
+  requestCloudSync('memories');
 }
 
 function loadMeetingMoments() {
@@ -2223,7 +2309,7 @@ function normalizePeriodRecord(record: Partial<PeriodRecord>) {
 
 function savePeriodRecords() {
   localStorage.setItem(storageKey('period-records'), JSON.stringify(periodRecords.value));
-  requestCloudSync();
+  requestCloudSync('period');
 }
 
 function loadPeriodRecords() {
@@ -2339,6 +2425,7 @@ function resetPeriodCalendar() {
 function togglePeriodPrivacyMode() {
   periodPrivacyMode.value = !periodPrivacyMode.value;
   localStorage.setItem(storageKey('period-privacy-mode'), String(periodPrivacyMode.value));
+  requestCloudSync('period');
 }
 
 function togglePeriodSelection(target: 'symptom' | 'mood' | 'care', id: string) {
@@ -2402,14 +2489,14 @@ function saveJourneyTrips(sync = true) {
   if (activeJourneyTripId.value) {
     localStorage.setItem(storageKey('active-journey-trip'), activeJourneyTripId.value);
   }
-  if (sync) requestCloudSync();
+  if (sync) requestCloudSync('journey');
 }
 
 function selectJourneyTrip(tripId: string) {
   activeJourneyTripId.value = tripId;
   activeJourneyDayId.value = '';
   localStorage.setItem(storageKey('active-journey-trip'), tripId);
-  requestCloudSync();
+  requestCloudSync('journey');
 }
 
 function selectJourneyDay(dayId: string) {

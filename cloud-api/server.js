@@ -12,6 +12,16 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '*';
 const TOKEN_MAX_AGE_MS = Number(process.env.TOKEN_MAX_AGE_MS ?? 1000 * 60 * 60 * 24 * 30);
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION ?? 'count-to-814';
 const FIRESTORE_DOCUMENT = process.env.FIRESTORE_DOCUMENT ?? 'app-state';
+const FEATURE_ROUTES = [
+  ['settings', '/api/settings'],
+  ['today', '/api/today'],
+  ['prepare', '/api/prepare'],
+  ['memories', '/api/memories'],
+  ['wishes', '/api/wishes'],
+  ['period', '/api/period'],
+  ['journey', '/api/journey'],
+  ['misc', '/api/misc']
+];
 
 app.use(express.json({ limit: '15mb' }));
 app.use((request, response, next) => {
@@ -71,6 +81,33 @@ app.put('/api/state', requireAuth, async (request, response, next) => {
   }
 });
 
+for (const [feature, path] of FEATURE_ROUTES) {
+  app.get(path, requireAuth, async (_request, response, next) => {
+    try {
+      const snapshot = await featureDocument(feature).get();
+      response.json({ data: snapshot.exists ? snapshot.data()?.data ?? null : null });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put(path, requireAuth, async (request, response, next) => {
+    try {
+      const data = normalizeFeaturePayload(request.body?.data, feature);
+      await featureDocument(feature).set(
+        {
+          data,
+          updatedAt: FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      response.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+}
+
 app.use((error, _request, response, _next) => {
   console.error(error);
   response.status(400).json({ error: error instanceof Error ? error.message : 'Bad request.' });
@@ -82,6 +119,10 @@ app.listen(PORT, () => {
 
 function stateDocument() {
   return firestore.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOCUMENT);
+}
+
+function featureDocument(feature) {
+  return firestore.collection(FIRESTORE_COLLECTION).doc(`${FIRESTORE_DOCUMENT}-${feature}`);
 }
 
 function requireAuth(request, response, next) {
@@ -153,4 +194,40 @@ function normalizeStatePayload(data) {
     localStorage,
     photos
   };
+}
+
+function normalizeFeaturePayload(data, feature) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`${feature} payload must be an object.`);
+  }
+
+  if (!data.localStorage || typeof data.localStorage !== 'object' || Array.isArray(data.localStorage)) {
+    throw new Error(`${feature} payload is missing localStorage.`);
+  }
+
+  const localStorage = Object.fromEntries(
+    Object.entries(data.localStorage)
+      .filter(([key, value]) => typeof key === 'string' && typeof value === 'string')
+      .map(([key, value]) => [key, value])
+  );
+
+  const payload = {
+    schemaVersion: typeof data.schemaVersion === 'number' ? data.schemaVersion : 2,
+    exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString(),
+    localStorage
+  };
+
+  if (feature === 'memories') {
+    payload.photos = Array.isArray(data.photos)
+      ? data.photos.filter(
+          (photo) =>
+            photo &&
+            typeof photo.id === 'string' &&
+            typeof photo.name === 'string' &&
+            typeof photo.dataUrl === 'string'
+        )
+      : [];
+  }
+
+  return payload;
 }
