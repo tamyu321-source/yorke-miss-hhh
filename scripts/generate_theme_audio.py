@@ -63,6 +63,21 @@ def add_tone(
                 + math.sin(2 * math.pi * freq * 2.01 * t) * 0.2
                 + math.sin(2 * math.pi * freq * 3.02 * t) * 0.08
             )
+        elif instrument == "felt_pluck":
+            env = math.exp(-2.35 * t / max(duration, 0.01)) * envelope(t, duration, 0.018, duration * 0.82, 0.7)
+            sample = (
+                math.sin(2 * math.pi * freq * t) * 0.58
+                + triangle((freq * 0.995 * t) % 1.0) * 0.22
+                + math.sin(2 * math.pi * freq * 1.997 * t) * 0.14
+                + math.sin(2 * math.pi * freq * 3.01 * t) * 0.06
+            )
+        elif instrument == "future_pulse":
+            env = envelope(t, duration, 0.006, duration * 0.74, 0.45) * math.exp(-5.2 * t / max(duration, 0.01))
+            sample = (
+                math.sin(2 * math.pi * freq * t) * 0.7
+                + math.sin(2 * math.pi * freq * 0.5 * t) * 0.2
+                + triangle((freq * 0.25 * t) % 1.0) * 0.1
+            )
         elif instrument == "wind_bell":
             env = math.exp(-2.2 * t / max(duration, 0.01)) * envelope(t, duration, 0.008, duration * 0.92, 0.45)
             sample = (
@@ -148,37 +163,65 @@ def make_buffer(duration: float) -> list[float]:
     return [0.0 for _ in range(int(duration * SAMPLE_RATE))]
 
 
+def add_motif(
+    buf: list[float],
+    start: float,
+    notes: list[float],
+    rhythm: list[float],
+    volume: float,
+    instrument: str,
+    octave: int = 0,
+    detune: float = 0.0,
+) -> None:
+    t = start
+    for index, note in enumerate(notes):
+        step = rhythm[index % len(rhythm)]
+        add_tone(buf, note + octave * 12, t, step * 1.55, volume * (0.92 if index % 3 == 2 else 1.0), instrument, detune)
+        t += step
+
+
+def add_future_pulse(buf: list[float], start: float, end: float, note: float, every: float, volume: float) -> None:
+    t = start
+    while t < end:
+        add_tone(buf, note, t, 0.72, volume, "future_pulse")
+        add_tone(buf, note + 12, t + every * 0.48, 0.46, volume * 0.34, "future_pulse")
+        t += every
+
+
 def render_peach() -> list[float]:
-    duration = 52.0
+    duration = 56.0
     buf = make_buffer(duration)
     chords = [
-        (0, [41, 48, 53, 57]),
-        (6.5, [45, 52, 57, 60]),
-        (13, [46, 53, 58, 62]),
-        (19.5, [43, 50, 55, 58]),
-        (26, [41, 48, 53, 60]),
-        (32.5, [48, 55, 60, 64]),
-        (39, [46, 53, 57, 62]),
-        (45.5, [43, 50, 55, 62]),
+        (0, [41, 48, 52, 57, 64]),
+        (7, [45, 52, 57, 60, 64]),
+        (14, [46, 53, 57, 62, 65]),
+        (21, [43, 50, 55, 59, 62]),
+        (28, [41, 48, 53, 57, 64]),
+        (35, [38, 45, 53, 57, 62]),
+        (42, [46, 53, 58, 62, 65]),
+        (49, [43, 50, 55, 59, 64]),
     ]
     for start, notes in chords:
         for offset, note in enumerate(notes):
-            add_tone(buf, note, start, 8.2, 0.030 + offset * 0.002, "peach_pad", detune=-3 + offset * 2)
+            add_tone(buf, note, start, 9.4, 0.024 + offset * 0.0016, "peach_pad", detune=-4 + offset * 2)
         for offset, note in enumerate(notes[1:]):
-            add_tone(buf, note + 12, start + 0.55 + offset * 0.55, 2.4, 0.019, "music_box")
+            add_tone(buf, note + 12, start + 0.46 + offset * 0.52, 2.2, 0.013, "music_box")
 
-    melody = [
-        (2.8, 65, 3.5), (8.5, 64, 3.2), (14.6, 60, 4.2), (21.8, 58, 3.2),
-        (27.4, 60, 3.8), (33.8, 65, 4.2), (40.2, 67, 3.7), (46.4, 64, 4.8),
+    hook = [65, 69, 72, 76, 74, 72, 69, 65]
+    hook_rhythm = [0.62, 0.62, 0.86, 1.36, 0.76, 0.86, 1.2, 1.7]
+    for start, volume in [(0.22, 0.032), (28.4, 0.026)]:
+        add_motif(buf, start, hook, hook_rhythm, volume, "felt_pluck")
+        add_motif(buf, start + 0.09, hook, hook_rhythm, volume * 0.38, "music_box", octave=1)
+
+    answer = [
+        (7.8, 72, 2.8), (11.4, 69, 2.6), (15.2, 67, 3.4), (20.0, 64, 3.2),
+        (36.8, 76, 2.9), (40.4, 74, 2.4), (44.2, 72, 3.6), (50.2, 69, 4.1),
     ]
-    for start, note, dur in melody:
-        add_tone(buf, note, start, dur, 0.032, "peach_pad")
-        add_tone(buf, note + 12, start + 0.16, dur * 0.48, 0.014, "music_box")
+    for start, note, dur in answer:
+        add_tone(buf, note, start, dur, 0.026, "peach_pad")
+        add_tone(buf, note + 12, start + 0.14, dur * 0.42, 0.010, "music_box")
 
-    signature = [(0.18, 65), (0.74, 69), (1.28, 72), (2.05, 77)]
-    for start, note in signature:
-        add_tone(buf, note, start, 2.4, 0.034, "music_box")
-    add_tone(buf, 53, 0.0, 6.2, 0.022, "peach_pad")
+    add_future_pulse(buf, 3.2, duration - 1.0, 41, 7.0, 0.006)
 
     add_delay(buf, 0.46, 0.24, 0.42)
     one_pole_lowpass(buf, 3200)
@@ -188,32 +231,29 @@ def render_peach() -> list[float]:
 
 
 def render_mint() -> list[float]:
-    duration = 48.0
+    duration = 50.0
     buf = make_buffer(duration)
     pads = [
-        (0, [50, 57, 62, 66]),
-        (12, [45, 52, 57, 62]),
-        (24, [47, 54, 59, 66]),
-        (36, [42, 50, 57, 62]),
+        (0, [50, 57, 62, 66, 69]),
+        (12.5, [47, 54, 59, 62, 66]),
+        (25, [45, 52, 57, 62, 64]),
+        (37.5, [43, 50, 57, 62, 66]),
     ]
     for start, notes in pads:
         for offset, note in enumerate(notes):
-            add_tone(buf, note + 12, start, 12.5, 0.012 + offset * 0.001, "mint_air", detune=-6 + offset * 4)
+            add_tone(buf, note + 12, start, 13.0, 0.009 + offset * 0.0008, "mint_air", detune=-7 + offset * 4)
 
-    chimes = [74, 78, 81, 86, 83, 81, 78, 76, 74, 76, 78, 83, 86, 88, 86, 83]
-    for cycle in range(2):
-        base = cycle * 22.5
-        for i, note in enumerate(chimes):
-            start = base + i * 1.25 + (0.16 if i % 4 == 2 else 0)
-            add_tone(buf, note, start, 2.1, 0.020 if i % 5 == 0 else 0.014, "wind_bell", detune=7 if i % 2 else -8)
+    hook = [86, 90, 93, 98, 95, 90, 86, 81]
+    hook_rhythm = [0.34, 0.34, 0.46, 0.7, 0.46, 0.52, 0.86, 1.2]
+    for base, volume in [(0.06, 0.027), (16.4, 0.020), (32.5, 0.022)]:
+        add_motif(buf, base, hook, hook_rhythm, volume, "wind_bell", detune=8)
+        add_motif(buf, base + 0.18, [note - 12 for note in hook], hook_rhythm, volume * 0.28, "mint_air", detune=-5)
 
-    wind = [(5.5, 69), (11.0, 74), (17.5, 78), (25.0, 81), (32.5, 83), (39.0, 78), (44.0, 74)]
+    wind = [(5.5, 74), (10.5, 78), (15.4, 81), (22.5, 83), (28.5, 86), (36.8, 83), (44.0, 78)]
     for start, note in wind:
-        add_tone(buf, note, start, 4.4, 0.018, "mint_air", detune=4)
+        add_tone(buf, note, start, 4.8, 0.014, "mint_air", detune=4)
 
-    opening_cascade = [86, 90, 93, 98, 95, 90, 86]
-    for i, note in enumerate(opening_cascade):
-        add_tone(buf, note, 0.08 + i * 0.28, 2.2, 0.021, "wind_bell", detune=(-10 if i % 2 else 12))
+    add_future_pulse(buf, 4.0, duration - 1.0, 50, 6.25, 0.0048)
 
     add_delay(buf, 0.24, 0.36, 0.55)
     one_pole_lowpass(buf, 7200)
@@ -223,28 +263,31 @@ def render_mint() -> list[float]:
 
 
 def render_night() -> list[float]:
-    duration = 56.0
+    duration = 58.0
     buf = make_buffer(duration)
     drones = [
-        (0, [33, 40, 45, 48]),
-        (18, [31, 38, 43, 47]),
-        (36, [29, 36, 41, 45]),
+        (0, [33, 40, 45, 52]),
+        (19, [31, 38, 43, 50]),
+        (38, [29, 36, 41, 48]),
     ]
     for start, notes in drones:
         for offset, note in enumerate(notes):
-            add_tone(buf, note, start, 22.0, 0.042 if offset == 0 else 0.018, "night_drone", detune=-8 + offset * 5)
+            add_tone(buf, note, start, 23.0, 0.040 if offset == 0 else 0.016, "night_drone", detune=-9 + offset * 5)
 
-    beacons = [(6, 64, 7.5), (19, 67, 6.5), (32, 69, 8), (46, 60, 6.5)]
+    beacons = [(5.8, 64, 7.6), (18.2, 68, 6.2), (30.6, 71, 7.8), (45.0, 60, 6.8)]
     for start, note, dur in beacons:
-        add_tone(buf, note, start, dur, 0.024, "night_beacon", detune=-2)
+        add_tone(buf, note, start, dur, 0.021, "night_beacon", detune=-2)
 
-    stars = [(12, 76), (26, 79), (40, 72), (51, 81)]
+    stars = [(11.5, 76), (25.0, 80), (39.5, 72), (52.5, 83)]
     for start, note in stars:
-        add_tone(buf, note, start, 4.0, 0.008, "wind_bell", detune=4)
+        add_tone(buf, note, start, 4.4, 0.007, "wind_bell", detune=4)
 
-    add_tone(buf, 28, 0.0, 10.0, 0.055, "night_drone", detune=-8)
-    add_tone(buf, 52, 1.6, 7.0, 0.020, "night_beacon", detune=-4)
-    add_tone(buf, 76, 4.8, 4.4, 0.008, "wind_bell", detune=5)
+    hook = [64, 68, 71, 76, 74, 71, 68, 64]
+    hook_rhythm = [1.0, 0.82, 1.15, 2.2, 0.9, 1.1, 1.4, 2.6]
+    add_motif(buf, 1.2, hook, hook_rhythm, 0.021, "night_beacon")
+    add_motif(buf, 29.0, hook, hook_rhythm, 0.017, "night_beacon")
+
+    add_future_pulse(buf, 2.5, duration - 2.0, 33, 9.5, 0.007)
 
     add_delay(buf, 0.72, 0.18, 0.28)
     one_pole_lowpass(buf, 1800)
@@ -254,10 +297,11 @@ def render_night() -> list[float]:
 
 
 def render_peach_stinger() -> list[float]:
-    buf = make_buffer(3.2)
-    for start, note in [(0.02, 65), (0.36, 69), (0.72, 72), (1.18, 77)]:
-        add_tone(buf, note, start, 2.0, 0.060, "music_box")
-    add_tone(buf, 53, 0.0, 3.0, 0.026, "peach_pad")
+    buf = make_buffer(3.6)
+    add_motif(buf, 0.02, [65, 69, 72, 76, 74, 72], [0.28, 0.28, 0.38, 0.64, 0.38, 0.7], 0.058, "felt_pluck")
+    add_motif(buf, 0.08, [77, 81, 84], [0.42, 0.5, 0.95], 0.020, "music_box")
+    add_tone(buf, 53, 0.0, 3.4, 0.026, "peach_pad")
+    add_tone(buf, 41, 0.0, 2.7, 0.014, "future_pulse")
     add_delay(buf, 0.32, 0.24, 0.38)
     one_pole_lowpass(buf, 3600)
     normalize(buf, 0.66)
@@ -265,10 +309,10 @@ def render_peach_stinger() -> list[float]:
 
 
 def render_mint_stinger() -> list[float]:
-    buf = make_buffer(3.2)
-    for i, note in enumerate([86, 90, 93, 98, 95, 90]):
-        add_tone(buf, note, 0.03 + i * 0.18, 2.1, 0.046, "wind_bell", detune=12 if i % 2 else -10)
-    add_tone(buf, 74, 0.2, 2.5, 0.020, "mint_air")
+    buf = make_buffer(3.6)
+    add_motif(buf, 0.02, [86, 90, 93, 98, 95, 90, 86], [0.16, 0.16, 0.22, 0.36, 0.24, 0.34, 0.82], 0.050, "wind_bell", detune=10)
+    add_motif(buf, 0.24, [74, 78, 81], [0.46, 0.58, 1.1], 0.018, "mint_air")
+    add_tone(buf, 50, 0.0, 2.8, 0.012, "future_pulse")
     add_delay(buf, 0.2, 0.34, 0.58)
     one_pole_lowpass(buf, 7600)
     normalize(buf, 0.62)
@@ -276,11 +320,11 @@ def render_mint_stinger() -> list[float]:
 
 
 def render_night_stinger() -> list[float]:
-    buf = make_buffer(3.8)
-    add_tone(buf, 28, 0.0, 3.7, 0.070, "night_drone", detune=-8)
-    add_tone(buf, 40, 0.15, 3.4, 0.032, "night_drone", detune=6)
-    add_tone(buf, 64, 0.82, 2.6, 0.026, "night_beacon", detune=-3)
-    add_tone(buf, 76, 2.2, 1.4, 0.010, "wind_bell", detune=5)
+    buf = make_buffer(4.2)
+    add_tone(buf, 28, 0.0, 4.1, 0.066, "night_drone", detune=-8)
+    add_tone(buf, 40, 0.16, 3.8, 0.030, "night_drone", detune=6)
+    add_motif(buf, 0.7, [64, 68, 71, 76, 74], [0.52, 0.48, 0.72, 1.05, 0.95], 0.025, "night_beacon")
+    add_tone(buf, 83, 2.85, 1.25, 0.007, "wind_bell", detune=5)
     add_delay(buf, 0.62, 0.16, 0.3)
     one_pole_lowpass(buf, 2100)
     normalize(buf, 0.70)
