@@ -549,6 +549,7 @@ const cloudStatus = ref('尚未同步');
 const cloudSyncBusy = ref(false);
 const cloudSyncConfigured = isCloudSyncConfigured();
 const localPreviewMode = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+const appInForeground = ref(document.visibilityState === 'visible' && !document.hidden);
 const journeyTrips = ref<JourneyTrip[]>([]);
 const activeJourneyTripId = ref('');
 const activeJourneyDayId = ref('');
@@ -1849,22 +1850,15 @@ watch(
     updateAppThemeChrome(theme);
     if (bgmPlaying.value) {
       stopBackgroundMusic();
-      startBackgroundMusic();
+      syncBackgroundMusicWithEnvironment();
     }
   },
   { immediate: true }
 );
 
 watch(
-  () => settings.value.soundFeedback,
-  (enabled) => {
-    if (enabled && appUnlocked.value && audioUnlocked.value) {
-      startBackgroundMusic();
-      return;
-    }
-
-    stopBackgroundMusic();
-  }
+  () => settings.value.backgroundMusic,
+  () => syncBackgroundMusicWithEnvironment()
 );
 
 onMounted(() => {
@@ -1891,6 +1885,9 @@ onMounted(() => {
   window.addEventListener('resize', updateViewportSize);
   window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   window.addEventListener('appinstalled', handleAppInstalled);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('pagehide', handlePageHide);
+  window.addEventListener('pageshow', handlePageShow);
   window.addEventListener('pointermove', updateSceneTilt);
   window.addEventListener('pointermove', movePlaneDrag);
   window.addEventListener('pointerup', endPlaneDrag);
@@ -1932,6 +1929,9 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateViewportSize);
   window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   window.removeEventListener('appinstalled', handleAppInstalled);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.removeEventListener('pagehide', handlePageHide);
+  window.removeEventListener('pageshow', handlePageShow);
   window.removeEventListener('pointermove', updateSceneTilt);
   window.removeEventListener('pointermove', movePlaneDrag);
   window.removeEventListener('pointerup', endPlaneDrag);
@@ -2014,9 +2014,7 @@ function enterUnlockedApp(startSync: boolean) {
     appUnlocked.value = true;
     startOpeningSequence();
   }
-  if (audioUnlocked.value) {
-    startBackgroundMusic();
-  }
+  syncBackgroundMusicWithEnvironment();
   if (startSync) {
     startCloudSyncLoop();
   }
@@ -3502,7 +3500,8 @@ function saveSettings() {
     targetTime: normalizeClockTime(settingsDraft.value.targetTime, defaultSettings.targetTime),
     welcomeLine: settingsDraft.value.welcomeLine.trim() || defaultSettings.welcomeLine,
     reducedMotion: settingsDraft.value.reducedMotion,
-    soundFeedback: settingsDraft.value.soundFeedback
+    soundFeedback: settingsDraft.value.soundFeedback,
+    backgroundMusic: settingsDraft.value.backgroundMusic
   };
   settings.value = next;
   settingsDraft.value = { ...next };
@@ -3580,7 +3579,8 @@ function loadSettings() {
       targetDate: normalizeDateSetting(parsed.targetDate ?? defaultSettings.targetDate, defaultSettings.targetDate),
       targetTime: normalizeClockTime(parsed.targetTime ?? defaultSettings.targetTime, defaultSettings.targetTime),
       reducedMotion: Boolean(parsed.reducedMotion),
-      soundFeedback: parsed.soundFeedback ?? defaultSettings.soundFeedback
+      soundFeedback: parsed.soundFeedback ?? defaultSettings.soundFeedback,
+      backgroundMusic: parsed.backgroundMusic ?? defaultSettings.backgroundMusic
     };
     settings.value = loaded;
     settingsDraft.value = { ...loaded };
@@ -3866,6 +3866,25 @@ function updateViewportSize() {
     width: window.innerWidth,
     height: window.innerHeight
   };
+}
+
+function isDocumentInForeground() {
+  return document.visibilityState === 'visible' && !document.hidden;
+}
+
+function handleVisibilityChange() {
+  appInForeground.value = isDocumentInForeground();
+  syncBackgroundMusicWithEnvironment();
+}
+
+function handlePageHide() {
+  appInForeground.value = false;
+  stopBackgroundMusic();
+}
+
+function handlePageShow() {
+  appInForeground.value = isDocumentInForeground();
+  syncBackgroundMusicWithEnvironment();
 }
 
 async function loadMapWeather() {
@@ -4508,8 +4527,25 @@ function getAudioContext() {
   return audioContext;
 }
 
+function anyAudioEnabled() {
+  return settings.value.soundFeedback || settings.value.backgroundMusic;
+}
+
+function shouldPlayBackgroundMusic() {
+  return Boolean(settings.value.backgroundMusic && appUnlocked.value && audioUnlocked.value && appInForeground.value);
+}
+
+function syncBackgroundMusicWithEnvironment() {
+  if (shouldPlayBackgroundMusic()) {
+    startBackgroundMusic();
+    return;
+  }
+
+  stopBackgroundMusic();
+}
+
 function unlockAudio() {
-  if (!settings.value.soundFeedback) return null;
+  if (!anyAudioEnabled()) return null;
 
   const context = getAudioContext();
   if (!context) return null;
@@ -4523,9 +4559,7 @@ function unlockAudio() {
 function handleAppPointerDown(event: PointerEvent) {
   const context = unlockAudio();
   if (!context) return;
-  if (appUnlocked.value) {
-    startBackgroundMusic();
-  }
+  syncBackgroundMusicWithEnvironment();
   if (isInteractiveAudioTarget(event.target)) {
     playSoftSound('tap');
   }
@@ -4536,9 +4570,7 @@ function handleAppKeyDown(event: KeyboardEvent) {
   if (!isInteractiveAudioTarget(event.target)) return;
   const context = unlockAudio();
   if (!context) return;
-  if (appUnlocked.value) {
-    startBackgroundMusic();
-  }
+  syncBackgroundMusicWithEnvironment();
   playSoftSound('tap');
 }
 
@@ -4579,7 +4611,7 @@ function playSoftSound(kind: SoftSoundKind) {
 }
 
 function playThemeSwitchMotif(theme: ThemeId) {
-  if (!settings.value.soundFeedback) return;
+  if (!settings.value.backgroundMusic || !appInForeground.value) return;
 
   themeStingerAudio?.pause();
   themeStingerAudio = new Audio(backgroundStingerSources[theme]);
@@ -4590,6 +4622,7 @@ function playThemeSwitchMotif(theme: ThemeId) {
 }
 
 function playThemeSwitchFallback(theme: ThemeId) {
+  if (!settings.value.backgroundMusic || !appInForeground.value) return;
   const context = unlockAudio();
   if (!context) return;
 
@@ -4693,7 +4726,7 @@ function midiToFrequency(note: number) {
 }
 
 function startBackgroundMusic() {
-  if (!settings.value.soundFeedback || bgmPlaying.value) return;
+  if (!settings.value.backgroundMusic || !appUnlocked.value || !appInForeground.value || bgmPlaying.value) return;
   const context = unlockAudio();
   if (!context) return;
 
@@ -4719,7 +4752,7 @@ function startBackgroundMusic() {
 }
 
 function startGeneratedBackgroundMusic() {
-  if (!settings.value.soundFeedback || bgmPlaying.value) return;
+  if (!settings.value.backgroundMusic || !appUnlocked.value || !appInForeground.value || bgmPlaying.value) return;
   const context = unlockAudio();
   if (!context) return;
 
@@ -4770,7 +4803,7 @@ function fadeBackgroundAudio(audio: HTMLAudioElement, targetVolume: number, dura
 
 function scheduleBackgroundPhrase() {
   const context = audioContext && audioContext.state !== 'closed' ? audioContext : null;
-  if (!context || !bgmGain || !settings.value.soundFeedback) return;
+  if (!context || !bgmGain || !settings.value.backgroundMusic || !appInForeground.value) return;
 
   const theme = backgroundMusicThemes[previewTheme.value || settings.value.theme];
   const beatSeconds = 60 / theme.bpm;

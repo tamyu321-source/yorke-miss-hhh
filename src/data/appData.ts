@@ -56,7 +56,8 @@ export const defaultSettings: AppSettings = {
   targetTime: '18:00',
   welcomeLine: '把倒數放慢一點，讓見面自己靠近。',
   reducedMotion: false,
-  soundFeedback: true
+  soundFeedback: true,
+  backgroundMusic: true
 };
 
 export const themeOptions: Array<{ id: ThemeId; label: string }> = [

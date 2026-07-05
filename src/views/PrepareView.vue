@@ -77,6 +77,10 @@ export default createContextViewComponent('PrepareView');
         <input v-model="settingsDraft.soundFeedback" type="checkbox" />
         <span>互動音效</span>
       </label>
+      <label class="toggle-row">
+        <input v-model="settingsDraft.backgroundMusic" type="checkbox" />
+        <span>背景音樂</span>
+      </label>
       <div class="settings-actions">
         <button class="soft-button" type="button" @click="saveSettings">保存設定</button>
         <button class="ghost-button" type="button" @click="resetSettings">恢復預設</button>

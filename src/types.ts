@@ -140,6 +140,7 @@ export type AppSettings = {
   welcomeLine: string;
   reducedMotion: boolean;
   soundFeedback: boolean;
+  backgroundMusic: boolean;
 };
 
 export type WishItem = {
