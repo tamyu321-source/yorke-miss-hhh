@@ -29,6 +29,10 @@ type MemoryPhotosResponse = {
   photos: AppExportData['photos'];
 };
 
+type MemoryPhotoIdsResponse = {
+  ids: string[];
+};
+
 const CLOUD_FEATURES: CloudFeature[] = [
   'settings',
   'today',
@@ -248,6 +252,39 @@ async function fetchMemoryPhotos(token: string, fallbackPhotos: AppExportData['p
 }
 
 async function saveMemoryPhotos(token: string, photos: AppExportData['photos']) {
+  try {
+    const response = await cloudFetch<MemoryPhotoIdsResponse>('/api/memory-photo-ids', {
+      method: 'GET',
+      token
+    });
+    const remoteIds = new Set(Array.isArray(response.ids) ? response.ids.filter((id) => typeof id === 'string') : []);
+    const nextIds = new Set(photos.map((photo) => photo.id));
+
+    await Promise.all(
+      photos.map((photo) =>
+        cloudFetch(`/api/memory-photos/${encodeURIComponent(photo.id)}`, {
+          method: 'PUT',
+          token,
+          body: JSON.stringify({ photo })
+        })
+      )
+    );
+
+    await Promise.all(
+      [...remoteIds]
+        .filter((id) => !nextIds.has(id))
+        .map((id) =>
+          cloudFetch(`/api/memory-photos/${encodeURIComponent(id)}`, {
+            method: 'DELETE',
+            token
+          })
+        )
+    );
+    return;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
   await cloudFetch('/api/memory-photos', {
     method: 'PUT',
     token,

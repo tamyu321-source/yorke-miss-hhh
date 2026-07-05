@@ -28,7 +28,7 @@ app.use(express.json({ limit: '15mb' }));
 app.use((request, response, next) => {
   response.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS');
   response.setHeader('Vary', 'Origin');
 
   if (request.method === 'OPTIONS') {
@@ -130,6 +130,21 @@ app.get('/api/memory-photos', requireAuth, async (_request, response, next) => {
   }
 });
 
+app.get('/api/memory-photo-ids', requireAuth, async (_request, response, next) => {
+  try {
+    const snapshot = await firestore
+      .collection(FIRESTORE_COLLECTION)
+      .where('kind', '==', MEMORY_PHOTO_KIND)
+      .get();
+    const ids = snapshot.docs
+      .map((document) => document.data()?.photo?.id)
+      .filter((id) => typeof id === 'string');
+    response.json({ ids });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.put('/api/memory-photos', requireAuth, async (request, response, next) => {
   try {
     const photos = normalizeMemoryPhotos(request.body?.photos);
@@ -157,6 +172,30 @@ app.put('/api/memory-photos', requireAuth, async (request, response, next) => {
     });
 
     await batch.commit();
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/memory-photos/:id', requireAuth, async (request, response, next) => {
+  try {
+    const photo = normalizeMemoryPhoto(request.body?.photo);
+    if (photo.id !== request.params.id) {
+      throw new Error('Memory photo id does not match request path.');
+    }
+
+    await firestore
+      .collection(FIRESTORE_COLLECTION)
+      .doc(`${FIRESTORE_DOCUMENT}-memory-photo-${safeDocumentId(photo.id)}`)
+      .set(
+        {
+          kind: MEMORY_PHOTO_KIND,
+          photo,
+          updatedAt: FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
     response.json({ ok: true });
   } catch (error) {
     next(error);
@@ -293,20 +332,33 @@ function normalizeMemoryPhotos(photos) {
   }
 
   return photos
-    .filter(
-      (photo) =>
-        photo &&
-        typeof photo.id === 'string' &&
-        typeof photo.name === 'string' &&
-        typeof photo.dataUrl === 'string' &&
-        photo.dataUrl.startsWith('data:image/')
-    )
+    .map((photo) => {
+      try {
+        return normalizeMemoryPhoto(photo);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
     .slice(0, 24)
-    .map((photo) => ({
-      id: photo.id.slice(0, 120),
-      name: photo.name.slice(0, 180),
-      dataUrl: photo.dataUrl
-    }));
+}
+
+function normalizeMemoryPhoto(photo) {
+  if (
+    !photo ||
+    typeof photo.id !== 'string' ||
+    typeof photo.name !== 'string' ||
+    typeof photo.dataUrl !== 'string' ||
+    !photo.dataUrl.startsWith('data:image/')
+  ) {
+    throw new Error('Memory photo payload is invalid.');
+  }
+
+  return {
+    id: photo.id.slice(0, 120),
+    name: photo.name.slice(0, 180),
+    dataUrl: photo.dataUrl
+  };
 }
 
 function safeDocumentId(value) {
