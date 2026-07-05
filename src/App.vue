@@ -996,11 +996,16 @@ const selectedMemoryPhotoMeta = computed(() =>
 );
 const memoryPhotoCountLabel = computed(() => `${memoryPhotos.value.length} / ${MEMORY_PHOTO_LIMIT} 張`);
 const photoWallZoomLabel = computed(() => `${Math.round(photoWallScale.value * 100)}%`);
-const photoWallSurfaceStyle = computed<CSSProperties>(() => ({
-  width: `${PHOTO_WALL_BOARD_WIDTH}px`,
-  height: `${PHOTO_WALL_BOARD_HEIGHT}px`
-}));
+const photoWallSurfaceStyle = computed<CSSProperties>(() => {
+  const visualScale = Math.max(photoWallScale.value, 1);
+  return {
+    width: `${Math.round(PHOTO_WALL_BOARD_WIDTH * visualScale)}px`,
+    height: `${Math.round(PHOTO_WALL_BOARD_HEIGHT * visualScale)}px`
+  };
+});
 const photoWallContentStyle = computed<CSSProperties>(() => ({
+  width: `${PHOTO_WALL_BOARD_WIDTH}px`,
+  height: `${PHOTO_WALL_BOARD_HEIGHT}px`,
   transform: `scale(${photoWallScale.value})`
 }));
 const photoViewerTransform = computed<CSSProperties>(() => ({
