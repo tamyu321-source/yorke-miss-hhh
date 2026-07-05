@@ -1040,6 +1040,8 @@ const targetDateLabel = computed(() => `${settings.value.targetDate} ${settings.
 const targetDateShortLabel = computed(() => settings.value.targetDate.replace(/-/g, '.'));
 const themeClass = computed(() => `theme-${previewTheme.value || settings.value.theme}`);
 const themePreviewing = computed(() => Boolean(previewTheme.value));
+const backgroundMusicLabel = computed(() => (settings.value.backgroundMusic ? '音樂開' : '音樂關'));
+const backgroundMusicAriaLabel = computed(() => (settings.value.backgroundMusic ? '關閉背景音樂' : '開啟背景音樂'));
 const openingThemeLabel = computed(() => {
   if (settings.value.theme === 'mint') return '清風啟程';
   if (settings.value.theme === 'night') return '夜航啟動';
@@ -3550,6 +3552,20 @@ function previewThemeSelection(theme: ThemeId) {
   gentleVibrate(8);
 }
 
+function toggleBackgroundMusic() {
+  const next: AppSettings = { ...settings.value, backgroundMusic: !settings.value.backgroundMusic };
+  settings.value = next;
+  settingsDraft.value = { ...settingsDraft.value, backgroundMusic: next.backgroundMusic };
+  localStorage.setItem(storageKey('settings'), JSON.stringify(next));
+  setSettingsUpdatedAt();
+  requestCloudSync('settings');
+  if (next.backgroundMusic) {
+    unlockAudio();
+  }
+  syncBackgroundMusicWithEnvironment();
+  gentleVibrate(8);
+}
+
 function dismissOnboarding() {
   onboardingVisible.value = false;
   localStorage.setItem(storageKey('onboarding-seen'), 'yes');
@@ -5740,6 +5756,7 @@ provide(appViewContextKey, {
   theaterLights, themeClass, themeOptions, themePreviewing,
   themeTransition, timelineEvents, timelineProgressStyle, todayJourney,
   todayNote, todayQuestion, todayStart, todayTask,
+  backgroundMusicAriaLabel, backgroundMusicLabel, toggleBackgroundMusic,
   toggleCapsule, toggleJourneyEntryDone, toggleMeetingChecklist, toggleMeetingMoment, togglePeriodPrivacyMode, togglePeriodSelection, toggleSecretCodeHelp,
   toggleSuitcaseItem, toggleTask, toggleWish, triggerMilestoneWave,
   endPhotoWallCardDrag, endPhotoWallGesture, handlePhotoWallWheel, movePhotoWallCardDrag,

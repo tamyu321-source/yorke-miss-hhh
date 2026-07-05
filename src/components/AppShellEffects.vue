@@ -92,14 +92,26 @@ export default createContextViewComponent('AppShellEffects');
     </div>
 
 
-    <button
-      v-if="appUnlocked && !introActive && activeTab !== 'prepare'"
-      class="theme-discovery"
-      type="button"
-      aria-label="前往主題切換"
-      @click="openThemeSettings"
-    >
-      <span aria-hidden="true"></span>
-      換氛圍
-    </button>
+    <div v-if="appUnlocked && !introActive && activeTab !== 'prepare'" class="global-quick-actions">
+      <button
+        class="theme-discovery"
+        type="button"
+        aria-label="前往主題切換"
+        @click="openThemeSettings"
+      >
+        <span aria-hidden="true"></span>
+        換氛圍
+      </button>
+      <button
+        class="music-discovery"
+        :class="{ active: settings.backgroundMusic }"
+        type="button"
+        :aria-label="backgroundMusicAriaLabel"
+        :aria-pressed="settings.backgroundMusic"
+        @click="toggleBackgroundMusic"
+      >
+        <span aria-hidden="true"></span>
+        {{ backgroundMusicLabel }}
+      </button>
+    </div>
 </template>
