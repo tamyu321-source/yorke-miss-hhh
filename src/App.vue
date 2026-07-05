@@ -597,11 +597,13 @@ let photoWallDidMove = false;
 let photoWallClickGuardUntil = 0;
 let photoWallPhotoDragStart: {
   id: string;
+  pointerId: number;
   startX: number;
   startY: number;
   layoutX: number;
   layoutY: number;
   layoutZ: number;
+  captureTarget: HTMLElement | null;
   moved: boolean;
 } | null = null;
 let photoWallScaleSyncTimer: number | undefined;
@@ -1924,6 +1926,7 @@ onUnmounted(() => {
   if (flightLandingTimer) window.clearTimeout(flightLandingTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
   if (photoWallScaleSyncTimer) window.clearTimeout(photoWallScaleSyncTimer);
+  removePhotoWallCardDragListeners();
   stopBackgroundMusic();
   closeAudioContext();
   window.removeEventListener('online', updateOnlineState);
@@ -2947,27 +2950,36 @@ function getPhotoWallGestureCenter() {
 
 function startPhotoWallCardDrag(id: string, event: PointerEvent) {
   if (event.pointerType === 'mouse' && event.button !== 0) return;
+  event.preventDefault();
   event.stopPropagation();
 
   const target = event.currentTarget as HTMLElement | null;
-  target?.setPointerCapture?.(event.pointerId);
+  try {
+    target?.setPointerCapture?.(event.pointerId);
+  } catch {
+    // Some browsers do not keep capture stable inside transformed touch layers.
+  }
   const layout = getPhotoWallLayout(id);
 
   selectMemoryPhoto(id);
   photoWallDraggingPhotoId.value = id;
   photoWallPhotoDragStart = {
     id,
+    pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
     layoutX: layout.x,
     layoutY: layout.y,
     layoutZ: getNextPhotoWallZ(),
+    captureTarget: target,
     moved: false
   };
+  addPhotoWallCardDragListeners();
 }
 
 function movePhotoWallCardDrag(id: string, event: PointerEvent) {
-  if (!photoWallPhotoDragStart || photoWallPhotoDragStart.id !== id) return;
+  if (!photoWallPhotoDragStart || photoWallPhotoDragStart.id !== id || photoWallPhotoDragStart.pointerId !== event.pointerId) return;
+  event.preventDefault();
   event.stopPropagation();
 
   const dx = (event.clientX - photoWallPhotoDragStart.startX) / photoWallScale.value;
@@ -2990,11 +3002,17 @@ function movePhotoWallCardDrag(id: string, event: PointerEvent) {
 }
 
 function endPhotoWallCardDrag(id: string, event: PointerEvent) {
-  if (!photoWallPhotoDragStart || photoWallPhotoDragStart.id !== id) return;
+  if (!photoWallPhotoDragStart || photoWallPhotoDragStart.id !== id || photoWallPhotoDragStart.pointerId !== event.pointerId) return;
+  event.preventDefault();
   event.stopPropagation();
 
   const target = event.currentTarget as HTMLElement | null;
-  target?.releasePointerCapture?.(event.pointerId);
+  const captureTarget = photoWallPhotoDragStart.captureTarget ?? target;
+  try {
+    captureTarget?.releasePointerCapture?.(event.pointerId);
+  } catch {
+    // Capture may already be released if the drag ended outside the card.
+  }
 
   if (photoWallPhotoDragStart.moved) {
     saveMemoryPhotoLayouts();
@@ -3004,6 +3022,32 @@ function endPhotoWallCardDrag(id: string, event: PointerEvent) {
 
   photoWallDraggingPhotoId.value = '';
   photoWallPhotoDragStart = null;
+  removePhotoWallCardDragListeners();
+}
+
+function movePhotoWallCardDragFromWindow(event: PointerEvent) {
+  const drag = photoWallPhotoDragStart;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  movePhotoWallCardDrag(drag.id, event);
+}
+
+function endPhotoWallCardDragFromWindow(event: PointerEvent) {
+  const drag = photoWallPhotoDragStart;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  endPhotoWallCardDrag(drag.id, event);
+}
+
+function addPhotoWallCardDragListeners() {
+  removePhotoWallCardDragListeners();
+  window.addEventListener('pointermove', movePhotoWallCardDragFromWindow);
+  window.addEventListener('pointerup', endPhotoWallCardDragFromWindow);
+  window.addEventListener('pointercancel', endPhotoWallCardDragFromWindow);
+}
+
+function removePhotoWallCardDragListeners() {
+  window.removeEventListener('pointermove', movePhotoWallCardDragFromWindow);
+  window.removeEventListener('pointerup', endPhotoWallCardDragFromWindow);
+  window.removeEventListener('pointercancel', endPhotoWallCardDragFromWindow);
 }
 
 function getPhotoWallLayout(id: string): PhotoWallLayoutOverride {

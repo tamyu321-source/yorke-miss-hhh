@@ -164,9 +164,10 @@ export default createContextViewComponent('MemoriesView');
               @pointerup.stop="endPhotoWallCardDrag(photo.id, $event)"
               @pointercancel.stop="endPhotoWallCardDrag(photo.id, $event)"
               @click="openMemoryPhotoFromWall(photo.id)"
+              @dragstart.prevent
             >
               <span class="photo-wall-pin" aria-hidden="true"></span>
-              <img :src="photo.dataUrl" :alt="photo.name" />
+              <img :src="photo.dataUrl" :alt="photo.name" draggable="false" />
               <span class="photo-wall-caption">
                 <strong>{{ photo.dateLabel }}</strong>
                 <small>{{ photo.name }}</small>
