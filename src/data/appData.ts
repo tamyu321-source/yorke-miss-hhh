@@ -18,6 +18,10 @@ export const OPENING_SKIP_DURATION_MS = 620;
 export const OPENING_REDUCED_DURATION_MS = 650;
 export const SETTINGS_UPDATED_KIND = 'settings-updated-at';
 export const JOURNEY_UPDATED_KIND = 'journey-updated-at';
+export const MEMORIES_UPDATED_KIND = 'memories-updated-at';
+export const PERIOD_UPDATED_KIND = 'period-updated-at';
+export const PREPARE_UPDATED_KIND = 'prepare-updated-at';
+export const WISHES_UPDATED_KIND = 'wishes-updated-at';
 export const THEME_CHROME_COLORS: Record<ThemeId, { color: string; background: string; statusBar: string }> = {
   peach: { color: '#f9d8d7', background: '#fff7f2', statusBar: 'black-translucent' },
   mint: { color: '#dff4ef', background: '#eaf7f7', statusBar: 'black-translucent' },

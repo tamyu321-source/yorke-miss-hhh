@@ -52,7 +52,9 @@ import type {
 
 import {
   DAY_MS, OPENING_DURATION_MS, OPENING_RETURN_DURATION_MS, OPENING_SKIP_DURATION_MS,
-  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, JOURNEY_UPDATED_KIND, THEME_CHROME_COLORS,
+  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, JOURNEY_UPDATED_KIND,
+  MEMORIES_UPDATED_KIND, PERIOD_UPDATED_KIND, PREPARE_UPDATED_KIND, WISHES_UPDATED_KIND,
+  THEME_CHROME_COLORS,
   JOURNEY_AUTO_TIME_SLOTS, BOY_NAME,
   GIRL_NAME, defaultSettings, themeOptions,
   suitcaseItems,
@@ -635,6 +637,32 @@ const TODAY_STORAGE_KINDS = [
   'ritual-opened',
   'ritual-complete'
 ];
+type DurableCloudFeature = Exclude<CloudFeature, 'settings' | 'today' | 'misc'>;
+const DURABLE_FEATURES: DurableCloudFeature[] = ['prepare', 'memories', 'wishes', 'period', 'journey'];
+const FEATURE_UPDATED_KINDS: Record<DurableCloudFeature, string> = {
+  prepare: PREPARE_UPDATED_KIND,
+  memories: MEMORIES_UPDATED_KIND,
+  wishes: WISHES_UPDATED_KIND,
+  period: PERIOD_UPDATED_KIND,
+  journey: JOURNEY_UPDATED_KIND
+};
+const FEATURE_STORAGE_KINDS: Record<DurableCloudFeature, string[]> = {
+  prepare: ['suitcase', 'meeting-checklist', PREPARE_UPDATED_KIND],
+  memories: [
+    'meeting-moments',
+    'capsule-notes',
+    'flipped-capsules',
+    'hidden-cards',
+    'secret-code',
+    'custom-secret-codes',
+    'memory-photo-layouts',
+    'memory-photo-wall-scale',
+    MEMORIES_UPDATED_KIND
+  ],
+  wishes: ['wishes', WISHES_UPDATED_KIND],
+  period: ['period-records', 'period-privacy-mode', PERIOD_UPDATED_KIND],
+  journey: ['journey-trips', 'active-journey-trip', JOURNEY_UPDATED_KIND]
+};
 
 const todayStart = computed(() => startOfDay(now.value));
 const configuredStartDate = computed(() => {
@@ -2061,9 +2089,10 @@ async function loadCloudData() {
         const localTodayState = captureLocalTodayState(localTodayKey);
         const localTodayUpdatedAt = getLocalTodayUpdatedAt(localTodayKey);
         const cloudTodayUpdatedAt = getCloudTodayUpdatedAt(cloudData, localTodayKey);
-        const localJourneyState = captureLocalJourneyState();
-        const localJourneyUpdatedAt = getLocalJourneyUpdatedAt();
-        const cloudJourneyUpdatedAt = getCloudJourneyUpdatedAt(cloudData);
+        const storedLocalMemoryPhotos = await loadStoredPhotos();
+        const localFeatureStates = captureLocalFeatureStates(storedLocalMemoryPhotos);
+        const shouldPreserveLocalMemories = shouldPreserveLocalFeature('memories', cloudData, localFeatureStates.memories.updatedAt);
+        const localMemoryPhotos = shouldPreserveLocalMemories ? storedLocalMemoryPhotos : [];
         restoreAppLocalStorage(cloudData.localStorage, 'replace');
         if (localSettings && localSettingsUpdatedAt > cloudSettingsUpdatedAt) {
           localStorage.setItem(storageKey('settings'), localSettings);
@@ -2074,11 +2103,14 @@ async function loadCloudData() {
           restoreLocalTodayState(localTodayState);
           shouldPushLocalAfterCloudLoad = true;
         }
-        if (localJourneyUpdatedAt > cloudJourneyUpdatedAt) {
-          restoreLocalStorageEntries(localJourneyState);
+        DURABLE_FEATURES.forEach((feature) => {
+          const state = localFeatureStates[feature];
+          if (!shouldPreserveLocalFeature(feature, cloudData, state.updatedAt)) return;
+          restoreLocalStorageEntries(state.entries);
+          setFeatureUpdatedAt(feature, state.updatedAt || Date.now());
           shouldPushLocalAfterCloudLoad = true;
-        }
-        memoryPhotos.value = cloudData.photos;
+        });
+        memoryPhotos.value = shouldPreserveLocalMemories ? localMemoryPhotos : cloudData.photos;
         await savePhotos(memoryPhotos.value);
         reloadPersistentState();
         cloudStatus.value = '已載入雲端資料';
@@ -2158,8 +2190,9 @@ async function syncCloudNow(force = false, requestedFeatures?: CloudFeature[]) {
 }
 
 function requestCloudSync(features?: CloudFeature | CloudFeature[]) {
-  if (localDataMode.value) return;
   const requestedFeatures = normalizeCloudFeatures(features);
+  markCloudFeaturesUpdated(requestedFeatures);
+  if (localDataMode.value) return;
   void syncCloudNow(true, requestedFeatures);
 }
 
@@ -2171,6 +2204,22 @@ function normalizeCloudFeatures(features?: CloudFeature | CloudFeature[]) {
 function addPendingCloudFeatures(features?: CloudFeature[]) {
   if (!features) return;
   features.forEach((feature) => pendingCloudFeatures.add(feature));
+}
+
+function markCloudFeaturesUpdated(features?: CloudFeature[]) {
+  features?.forEach((feature) => {
+    if (feature === 'settings') {
+      setSettingsUpdatedAt();
+      return;
+    }
+    if (feature === 'today') {
+      setTodayUpdatedAt();
+      return;
+    }
+    if (DURABLE_FEATURES.includes(feature as DurableCloudFeature)) {
+      setFeatureUpdatedAt(feature as DurableCloudFeature);
+    }
+  });
 }
 
 function getCloudFeaturesToSync(requestedFeatures?: CloudFeature[]) {
@@ -2199,6 +2248,10 @@ function setJourneyUpdatedAt(timestamp = Date.now()) {
   localStorage.setItem(storageKey(JOURNEY_UPDATED_KIND), String(timestamp));
 }
 
+function setFeatureUpdatedAt(feature: DurableCloudFeature, timestamp = Date.now()) {
+  localStorage.setItem(storageKey(FEATURE_UPDATED_KINDS[feature]), String(timestamp));
+}
+
 function getLocalSettingsUpdatedAt() {
   return getStorageTimestamp(localStorage.getItem(storageKey(SETTINGS_UPDATED_KIND)));
 }
@@ -2215,12 +2268,22 @@ function getCloudTodayUpdatedAt(data: AppExportData, key = dateKey.value) {
   return getStorageTimestamp(data.localStorage[storageKey(TODAY_UPDATED_KIND, key)]);
 }
 
-function getLocalJourneyUpdatedAt() {
-  return getStorageTimestamp(localStorage.getItem(storageKey(JOURNEY_UPDATED_KIND)));
+function getLocalFeatureUpdatedAt(feature: DurableCloudFeature, memoryPhotoFallback: MemoryPhoto[] = []) {
+  return (
+    getStorageTimestamp(localStorage.getItem(storageKey(FEATURE_UPDATED_KINDS[feature]))) ||
+    inferFeatureUpdatedAt(feature, collectLocalFeatureStorage(feature), feature === 'memories' ? memoryPhotoFallback : [])
+  );
 }
 
-function getCloudJourneyUpdatedAt(data: AppExportData) {
-  return getStorageTimestamp(data.localStorage[storageKey(JOURNEY_UPDATED_KIND)]);
+function getCloudFeatureUpdatedAt(data: AppExportData, feature: DurableCloudFeature) {
+  return (
+    getStorageTimestamp(data.localStorage[storageKey(FEATURE_UPDATED_KINDS[feature])]) ||
+    inferFeatureUpdatedAt(feature, data.localStorage, feature === 'memories' ? data.photos : [])
+  );
+}
+
+function shouldPreserveLocalFeature(feature: DurableCloudFeature, cloudData: AppExportData, localUpdatedAt: number) {
+  return localUpdatedAt > getCloudFeatureUpdatedAt(cloudData, feature);
 }
 
 function getStorageTimestamp(value: string | null | undefined) {
@@ -2244,9 +2307,21 @@ function restoreLocalTodayState(entries: Record<string, string | null>) {
   restoreLocalStorageEntries(entries);
 }
 
-function captureLocalJourneyState() {
+function captureLocalFeatureStates(memoryPhotoFallback: MemoryPhoto[] = []) {
+  return Object.fromEntries(
+    DURABLE_FEATURES.map((feature) => [
+      feature,
+      {
+        entries: collectLocalFeatureStorage(feature),
+        updatedAt: getLocalFeatureUpdatedAt(feature, memoryPhotoFallback)
+      }
+    ])
+  ) as Record<DurableCloudFeature, { entries: Record<string, string | null>; updatedAt: number }>;
+}
+
+function collectLocalFeatureStorage(feature: DurableCloudFeature) {
   const localStorageEntries: Record<string, string | null> = {};
-  ['journey-trips', 'active-journey-trip', JOURNEY_UPDATED_KIND].forEach((kind) => {
+  FEATURE_STORAGE_KINDS[feature].forEach((kind) => {
     const storageName = storageKey(kind);
     localStorageEntries[storageName] = localStorage.getItem(storageName);
   });
@@ -2261,6 +2336,54 @@ function restoreLocalStorageEntries(entries: Record<string, string | null>) {
     }
     localStorage.setItem(key, value);
   });
+}
+
+function inferFeatureUpdatedAt(feature: DurableCloudFeature, data: Record<string, string | null | undefined>, photos: MemoryPhoto[] = []) {
+  const timestamps: number[] = [];
+  if (feature === 'memories') {
+    collectJsonTimestamps(data[storageKey('capsule-notes')], ['updatedAt']).forEach((timestamp) => timestamps.push(timestamp));
+    collectJsonTimestamps(data[storageKey('hidden-cards')], ['updatedAt', 'createdAt']).forEach((timestamp) => timestamps.push(timestamp));
+    photos.forEach((photo) => {
+      const idTimestamp = Number(String(photo.id).split('-')[0]);
+      if (Number.isFinite(idTimestamp) && idTimestamp > 0) timestamps.push(idTimestamp);
+    });
+  }
+  if (feature === 'wishes') {
+    collectJsonTimestamps(data[storageKey('wishes')], ['updatedAt', 'createdAt']).forEach((timestamp) => timestamps.push(timestamp));
+  }
+  if (feature === 'period') {
+    collectJsonTimestamps(data[storageKey('period-records')], ['updatedAt', 'createdAt']).forEach((timestamp) => timestamps.push(timestamp));
+  }
+  if (feature === 'journey') {
+    collectJsonTimestamps(data[storageKey('journey-trips')], ['updatedAt', 'createdAt']).forEach((timestamp) => timestamps.push(timestamp));
+  }
+  return timestamps.length ? Math.max(...timestamps) : 0;
+}
+
+function collectJsonTimestamps(raw: string | null | undefined, fields: string[]) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items.flatMap((item) => collectObjectTimestamps(item, fields));
+  } catch {
+    return [];
+  }
+}
+
+function collectObjectTimestamps(value: unknown, fields: string[]): number[] {
+  if (!value || typeof value !== 'object') return [];
+  const record = value as Record<string, unknown>;
+  const direct = fields.flatMap((field) => {
+    const timestamp = Date.parse(String(record[field] ?? ''));
+    return Number.isFinite(timestamp) ? [timestamp] : [];
+  });
+  const nested = Object.values(record).flatMap((item) => {
+    if (Array.isArray(item)) return item.flatMap((child) => collectObjectTimestamps(child, fields));
+    if (item && typeof item === 'object') return collectObjectTimestamps(item, fields);
+    return [];
+  });
+  return [...direct, ...nested];
 }
 
 function lockApp() {

@@ -1,5 +1,13 @@
 import type { AppExportData } from './backup';
 import {
+  JOURNEY_UPDATED_KIND,
+  MEMORIES_UPDATED_KIND,
+  PERIOD_UPDATED_KIND,
+  PREPARE_UPDATED_KIND,
+  SETTINGS_UPDATED_KIND,
+  WISHES_UPDATED_KIND
+} from './data/appData';
+import {
   applyJourneyTablesToExportData,
   createJourneyTablesFromExportData,
   type JourneyCloudTables
@@ -65,7 +73,7 @@ const CLOUD_FEATURE_PATHS: Record<CloudFeature, string> = {
 };
 
 const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
-  settings: ['settings', 'settings-updated-at', 'onboarding-seen', 'intro-seen'],
+  settings: ['settings', SETTINGS_UPDATED_KIND, 'onboarding-seen', 'intro-seen'],
   today: [
     'task',
     'message',
@@ -82,7 +90,7 @@ const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
     'checkins',
     'mood-history'
   ],
-  prepare: ['suitcase', 'meeting-checklist'],
+  prepare: ['suitcase', 'meeting-checklist', PREPARE_UPDATED_KIND],
   memories: [
     'meeting-moments',
     'capsule-notes',
@@ -91,11 +99,12 @@ const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
     'secret-code',
     'custom-secret-codes',
     'memory-photo-layouts',
-    'memory-photo-wall-scale'
+    'memory-photo-wall-scale',
+    MEMORIES_UPDATED_KIND
   ],
-  wishes: ['wishes'],
-  period: ['period-records', 'period-privacy-mode'],
-  journey: ['journey-trips', 'active-journey-trip', 'journey-updated-at']
+  wishes: ['wishes', WISHES_UPDATED_KIND],
+  period: ['period-records', 'period-privacy-mode', PERIOD_UPDATED_KIND],
+  journey: ['journey-trips', 'active-journey-trip', JOURNEY_UPDATED_KIND]
 };
 
 export function isCloudSyncConfigured() {
