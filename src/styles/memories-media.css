@@ -73,11 +73,16 @@
     radial-gradient(circle at 88% 82%, rgba(117, 183, 197, 0.22), transparent 120px),
     #f8efe8;
   box-shadow: inset 0 0 0 1px rgba(255, 250, 247, 0.72), 0 16px 38px rgba(36, 48, 71, 0.1);
+}
+
+.photo-wall-content-layer {
+  position: absolute;
+  inset: 0;
   transform-origin: 0 0;
   transition: transform 120ms ease-out;
 }
 
-.photo-wall-canvas.dragging .photo-wall-board {
+.photo-wall-canvas.dragging .photo-wall-content-layer {
   transition: none;
 }
 

@@ -994,10 +994,10 @@ const selectedMemoryPhotoMeta = computed(() =>
 const memoryPhotoCountLabel = computed(() => `${memoryPhotos.value.length} / ${MEMORY_PHOTO_LIMIT} 張`);
 const photoWallZoomLabel = computed(() => `${Math.round(photoWallScale.value * 100)}%`);
 const photoWallSurfaceStyle = computed<CSSProperties>(() => ({
-  width: `${Math.round(PHOTO_WALL_BOARD_WIDTH * photoWallScale.value)}px`,
-  height: `${Math.round(PHOTO_WALL_BOARD_HEIGHT * photoWallScale.value)}px`
+  width: `${PHOTO_WALL_BOARD_WIDTH}px`,
+  height: `${PHOTO_WALL_BOARD_HEIGHT}px`
 }));
-const photoWallBoardStyle = computed<CSSProperties>(() => ({
+const photoWallContentStyle = computed<CSSProperties>(() => ({
   transform: `scale(${photoWallScale.value})`
 }));
 const photoViewerTransform = computed<CSSProperties>(() => ({
@@ -5665,7 +5665,7 @@ provide(appViewContextKey, {
   packingItems, parseJourneyRowsFromImage, parseJourneyRowsFromSpreadsheetFile, passwordBusy,
   passwordInput, passwordStatus, passwordSuccess, pendingImport,
   pendingImportSummary, photoFilmstrip, photoViewerDragging, photoViewerOpen, photoViewerScale,
-  photoViewerTransform, photoWallBoardStyle, photoWallDragging, photoWallItems,
+  photoViewerTransform, photoWallContentStyle, photoWallDragging, photoWallItems,
   photoWallSurfaceStyle, photoWallZoomLabel, planeDrag, planeStyle,
   activeRoutePercent, flightLandingEffect, flightMapClass, flightOverlayCityMarkers,
   flightOverlayClass, flightOverlayGridLines, flightOverlayIslandMarkers, flightOverlayLandMasses,

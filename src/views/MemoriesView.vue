@@ -150,7 +150,8 @@ export default createContextViewComponent('MemoriesView');
           @pointercancel="endPhotoWallGesture"
         >
           <div class="photo-wall-zoom-surface" :style="photoWallSurfaceStyle">
-            <div class="photo-wall-board" :style="photoWallBoardStyle" aria-label="照片牆">
+            <div class="photo-wall-board" aria-label="照片牆">
+              <div class="photo-wall-content-layer" :style="photoWallContentStyle">
             <button
               v-for="photo in photoWallItems"
               :key="`wall-${photo.id}`"
@@ -171,6 +172,7 @@ export default createContextViewComponent('MemoriesView');
                 <small>{{ photo.name }}</small>
               </span>
             </button>
+              </div>
             </div>
           </div>
         </div>
