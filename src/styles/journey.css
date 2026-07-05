@@ -223,9 +223,21 @@ input[type="time"] {
 
 .travel-trip-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(88px, 0.8fr) repeat(3, minmax(0, 1fr));
   gap: 8px;
   justify-content: stretch;
+}
+
+.travel-sync-pill {
+  display: grid;
+  min-height: 40px;
+  place-items: center;
+  border: 1px solid rgba(49, 124, 118, 0.18);
+  border-radius: 10px;
+  background: rgba(49, 124, 118, 0.1);
+  color: var(--travel-teal);
+  font-size: 0.75rem;
+  font-weight: 950;
 }
 
 .travel-trip-actions .ghost-button {

@@ -52,7 +52,7 @@ import type {
 
 import {
   DAY_MS, OPENING_DURATION_MS, OPENING_RETURN_DURATION_MS, OPENING_SKIP_DURATION_MS,
-  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, THEME_CHROME_COLORS,
+  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, JOURNEY_UPDATED_KIND, THEME_CHROME_COLORS,
   JOURNEY_AUTO_TIME_SLOTS, BOY_NAME,
   GIRL_NAME, defaultSettings, themeOptions,
   suitcaseItems,
@@ -575,6 +575,7 @@ let themePreviewTimer: number | undefined;
 let milestoneTimer: number | undefined;
 let weatherTimer: number | undefined;
 let cloudSyncTimer: number | undefined;
+let journeySaveTimer: number | undefined;
 let pendingCloudSync = false;
 let pendingCloudFeatures = new Set<CloudFeature>();
 let deferredInstallPrompt: Event | null = null;
@@ -1690,6 +1691,12 @@ const journeyTripOptions = computed(() =>
     return leftDistance - rightDistance;
   })
 );
+const journeySyncLabel = computed(() => {
+  if (localDataMode.value) return '本機保存';
+  if (cloudSyncBusy.value) return '同步中';
+  if (cloudStatus.value.includes('失敗')) return '待重試';
+  return '自動保存';
+});
 const activeJourneyProgress = computed(() => {
   const trip = activeJourneyTrip.value;
   if (!trip) return 0;
@@ -1930,6 +1937,7 @@ onUnmounted(() => {
   if (weatherTimer) window.clearInterval(weatherTimer);
   if (flightLandingTimer) window.clearTimeout(flightLandingTimer);
   if (cloudSyncTimer) window.clearInterval(cloudSyncTimer);
+  if (journeySaveTimer) window.clearTimeout(journeySaveTimer);
   if (photoWallScaleSyncTimer) window.clearTimeout(photoWallScaleSyncTimer);
   removePhotoWallCardDragListeners();
   stopBackgroundMusic();
@@ -2053,6 +2061,9 @@ async function loadCloudData() {
         const localTodayState = captureLocalTodayState(localTodayKey);
         const localTodayUpdatedAt = getLocalTodayUpdatedAt(localTodayKey);
         const cloudTodayUpdatedAt = getCloudTodayUpdatedAt(cloudData, localTodayKey);
+        const localJourneyState = captureLocalJourneyState();
+        const localJourneyUpdatedAt = getLocalJourneyUpdatedAt();
+        const cloudJourneyUpdatedAt = getCloudJourneyUpdatedAt(cloudData);
         restoreAppLocalStorage(cloudData.localStorage, 'replace');
         if (localSettings && localSettingsUpdatedAt > cloudSettingsUpdatedAt) {
           localStorage.setItem(storageKey('settings'), localSettings);
@@ -2061,6 +2072,10 @@ async function loadCloudData() {
         }
         if (localTodayUpdatedAt > cloudTodayUpdatedAt) {
           restoreLocalTodayState(localTodayState);
+          shouldPushLocalAfterCloudLoad = true;
+        }
+        if (localJourneyUpdatedAt > cloudJourneyUpdatedAt) {
+          restoreLocalStorageEntries(localJourneyState);
           shouldPushLocalAfterCloudLoad = true;
         }
         memoryPhotos.value = cloudData.photos;
@@ -2180,6 +2195,10 @@ function setTodayUpdatedAt(key = dateKey.value, timestamp = Date.now()) {
   localStorage.setItem(storageKey(TODAY_UPDATED_KIND, key), String(timestamp));
 }
 
+function setJourneyUpdatedAt(timestamp = Date.now()) {
+  localStorage.setItem(storageKey(JOURNEY_UPDATED_KIND), String(timestamp));
+}
+
 function getLocalSettingsUpdatedAt() {
   return getStorageTimestamp(localStorage.getItem(storageKey(SETTINGS_UPDATED_KIND)));
 }
@@ -2194,6 +2213,14 @@ function getLocalTodayUpdatedAt(key = dateKey.value) {
 
 function getCloudTodayUpdatedAt(data: AppExportData, key = dateKey.value) {
   return getStorageTimestamp(data.localStorage[storageKey(TODAY_UPDATED_KIND, key)]);
+}
+
+function getLocalJourneyUpdatedAt() {
+  return getStorageTimestamp(localStorage.getItem(storageKey(JOURNEY_UPDATED_KIND)));
+}
+
+function getCloudJourneyUpdatedAt(data: AppExportData) {
+  return getStorageTimestamp(data.localStorage[storageKey(JOURNEY_UPDATED_KIND)]);
 }
 
 function getStorageTimestamp(value: string | null | undefined) {
@@ -2214,6 +2241,19 @@ function captureLocalTodayState(key: string) {
 }
 
 function restoreLocalTodayState(entries: Record<string, string | null>) {
+  restoreLocalStorageEntries(entries);
+}
+
+function captureLocalJourneyState() {
+  const localStorageEntries: Record<string, string | null> = {};
+  ['journey-trips', 'active-journey-trip', JOURNEY_UPDATED_KIND].forEach((kind) => {
+    const storageName = storageKey(kind);
+    localStorageEntries[storageName] = localStorage.getItem(storageName);
+  });
+  return localStorageEntries;
+}
+
+function restoreLocalStorageEntries(entries: Record<string, string | null>) {
   Object.entries(entries).forEach(([key, value]) => {
     if (value === null) {
       localStorage.removeItem(key);
@@ -4030,17 +4070,33 @@ function loadJourneyTrips() {
 }
 
 function saveJourneyTrips(sync = true) {
+  persistJourneyTrips(sync);
+  if (sync) requestCloudSync('journey');
+}
+
+function persistJourneyTrips(markUpdated = true) {
   localStorage.setItem(storageKey('journey-trips'), JSON.stringify(journeyTrips.value));
   if (activeJourneyTripId.value) {
     localStorage.setItem(storageKey('active-journey-trip'), activeJourneyTripId.value);
   }
-  if (sync) requestCloudSync('journey');
+  if (markUpdated) setJourneyUpdatedAt();
+}
+
+function queueJourneyTripsSave() {
+  persistJourneyTrips();
+  if (localDataMode.value) return;
+  if (journeySaveTimer) window.clearTimeout(journeySaveTimer);
+  journeySaveTimer = window.setTimeout(() => {
+    journeySaveTimer = undefined;
+    requestCloudSync('journey');
+  }, 700);
 }
 
 function selectJourneyTrip(tripId: string) {
   activeJourneyTripId.value = tripId;
   activeJourneyDayId.value = '';
   localStorage.setItem(storageKey('active-journey-trip'), tripId);
+  setJourneyUpdatedAt();
   requestCloudSync('journey');
 }
 
@@ -5744,7 +5800,7 @@ provide(appViewContextKey, {
   journeyDayRailItems,
   journeyDays, journeyImportBusy, journeyImportHelp, journeyImportMessage,
   journeyImportText, journeyNewDayDate, journeyNewTripTitle, journeyOcrProgress,
-  journeyPanelMode, journeySummaryStats, journeyTripCountdownLabel, journeyTripOptions,
+  journeyPanelMode, journeySummaryStats, journeySyncLabel, journeyTripCountdownLabel, journeyTripOptions,
   activeJourneyRouteLabel, activeJourneyNextEntry,
   journeyTrips, launchSparkles, launchThemeBurst, loadCheckins,
   loadCloudData, loadCustomSecretCodes, loadDailyState, loadJourneyTrips,
@@ -5789,7 +5845,7 @@ provide(appViewContextKey, {
   resetSettings, resetToday, restoreSavedCloudSession, revealSecret,
   ritualComplete, ritualOpened, ritualProgress, ritualSteps,
   routeFillStyle, saveCapsuleNote, saveDailyAnswer, saveDailyMessage, saveHiddenCard, savedMessageLine,
-  saveJourneyTrips, saveMemoryPhotos, saveSettings, saveWishes,
+  queueJourneyTripsSave, saveJourneyTrips, saveMemoryPhotos, saveSettings, saveWishes,
   scanRadar, sceneStyle, sceneTilt, secretCodeHelpVisible, secretCodeInput, secretCodeMessage,
   secretCodeList, secretCodeUnlocked, secretMailed, secretPressing,
   secretRevealed, secretWhisper, saveSelectedMemoryPhotoToDevice, selectedMemoryPhoto, selectedMemoryPhotoId,

@@ -12,6 +12,12 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '*';
 const TOKEN_MAX_AGE_MS = Number(process.env.TOKEN_MAX_AGE_MS ?? 1000 * 60 * 60 * 24 * 30);
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION ?? 'count-to-814';
 const FIRESTORE_DOCUMENT = process.env.FIRESTORE_DOCUMENT ?? 'app-state';
+const JOURNEY_TABLE_KINDS = {
+  meta: 'journey-meta',
+  trip: 'journey-trip',
+  day: 'journey-day',
+  entry: 'journey-entry'
+};
 const FEATURE_ROUTES = [
   ['settings', '/api/settings'],
   ['today', '/api/today'],
@@ -214,6 +220,117 @@ app.delete('/api/memory-photos/:id', requireAuth, async (request, response, next
   }
 });
 
+app.get('/api/journey/tables', requireAuth, async (_request, response, next) => {
+  try {
+    const collection = firestore.collection(FIRESTORE_COLLECTION);
+    const [metaSnapshot, tripSnapshot, daySnapshot, entrySnapshot] = await Promise.all([
+      collection.doc(`${FIRESTORE_DOCUMENT}-journey-meta`).get(),
+      collection.where('kind', '==', JOURNEY_TABLE_KINDS.trip).get(),
+      collection.where('kind', '==', JOURNEY_TABLE_KINDS.day).get(),
+      collection.where('kind', '==', JOURNEY_TABLE_KINDS.entry).get()
+    ]);
+
+    if (!metaSnapshot.exists && tripSnapshot.empty && daySnapshot.empty && entrySnapshot.empty) {
+      response.json({ data: null });
+      return;
+    }
+
+    const meta = metaSnapshot.data()?.meta ?? {};
+    response.json({
+      data: {
+        schemaVersion: typeof meta.schemaVersion === 'number' ? meta.schemaVersion : 1,
+        exportedAt: typeof meta.exportedAt === 'string' ? meta.exportedAt : new Date().toISOString(),
+        activeTripId: typeof meta.activeTripId === 'string' ? meta.activeTripId : '',
+        journeyUpdatedAt: typeof meta.journeyUpdatedAt === 'number' ? meta.journeyUpdatedAt : 0,
+        trips: tripSnapshot.docs.map((document) => document.data()?.trip).filter(Boolean),
+        days: daySnapshot.docs.map((document) => document.data()?.day).filter(Boolean),
+        entries: entrySnapshot.docs.map((document) => document.data()?.entry).filter(Boolean)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/journey/tables', requireAuth, async (request, response, next) => {
+  try {
+    const tables = normalizeJourneyTables(request.body?.data);
+    const collection = firestore.collection(FIRESTORE_COLLECTION);
+    const existing = await Promise.all(
+      Object.values(JOURNEY_TABLE_KINDS).map((kind) => collection.where('kind', '==', kind).get())
+    );
+    const operations = [];
+
+    existing.forEach((snapshot) => {
+      snapshot.docs.forEach((document) => operations.push((batch) => batch.delete(document.ref)));
+    });
+
+    operations.push((batch) =>
+      batch.set(
+        collection.doc(`${FIRESTORE_DOCUMENT}-journey-meta`),
+        {
+          kind: JOURNEY_TABLE_KINDS.meta,
+          meta: {
+            schemaVersion: tables.schemaVersion,
+            exportedAt: tables.exportedAt,
+            activeTripId: tables.activeTripId,
+            journeyUpdatedAt: tables.journeyUpdatedAt
+          },
+          updatedAt: FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      )
+    );
+
+    tables.trips.forEach((trip) => {
+      operations.push((batch) =>
+        batch.set(
+          collection.doc(`${FIRESTORE_DOCUMENT}-journey-trip-${safeDocumentId(trip.id)}`),
+          {
+            kind: JOURNEY_TABLE_KINDS.trip,
+            trip,
+            updatedAt: FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        )
+      );
+    });
+
+    tables.days.forEach((day) => {
+      operations.push((batch) =>
+        batch.set(
+          collection.doc(`${FIRESTORE_DOCUMENT}-journey-day-${safeDocumentId(`${day.tripId}-${day.id}`)}`),
+          {
+            kind: JOURNEY_TABLE_KINDS.day,
+            day,
+            updatedAt: FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        )
+      );
+    });
+
+    tables.entries.forEach((entry) => {
+      operations.push((batch) =>
+        batch.set(
+          collection.doc(`${FIRESTORE_DOCUMENT}-journey-entry-${safeDocumentId(`${entry.tripId}-${entry.dayId}-${entry.id}`)}`),
+          {
+            kind: JOURNEY_TABLE_KINDS.entry,
+            entry,
+            updatedAt: FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        )
+      );
+    });
+
+    await commitFirestoreOperations(operations);
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((error, _request, response, _next) => {
   console.error(error);
   response.status(400).json({ error: error instanceof Error ? error.message : 'Bad request.' });
@@ -229,6 +346,15 @@ function stateDocument() {
 
 function featureDocument(feature) {
   return firestore.collection(FIRESTORE_COLLECTION).doc(`${FIRESTORE_DOCUMENT}-${feature}`);
+}
+
+async function commitFirestoreOperations(operations) {
+  const chunkSize = 450;
+  for (let index = 0; index < operations.length; index += chunkSize) {
+    const batch = firestore.batch();
+    operations.slice(index, index + chunkSize).forEach((operation) => operation(batch));
+    await batch.commit();
+  }
 }
 
 function requireAuth(request, response, next) {
@@ -324,6 +450,94 @@ function normalizeFeaturePayload(data, feature) {
   };
 
   return payload;
+}
+
+function normalizeJourneyTables(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Journey tables payload must be an object.');
+  }
+
+  return {
+    schemaVersion: typeof data.schemaVersion === 'number' ? data.schemaVersion : 1,
+    exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString(),
+    activeTripId: normalizeText(data.activeTripId, 160),
+    journeyUpdatedAt: normalizeNumber(data.journeyUpdatedAt),
+    trips: Array.isArray(data.trips) ? data.trips.map(normalizeJourneyTripRow).filter(Boolean).slice(0, 50) : [],
+    days: Array.isArray(data.days) ? data.days.map(normalizeJourneyDayRow).filter(Boolean).slice(0, 400) : [],
+    entries: Array.isArray(data.entries) ? data.entries.map(normalizeJourneyEntryRow).filter(Boolean).slice(0, 1200) : []
+  };
+}
+
+function normalizeJourneyTripRow(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row) || typeof row.id !== 'string') return null;
+  return {
+    id: normalizeText(row.id, 160),
+    title: normalizeText(row.title, 220),
+    startDate: normalizeText(row.startDate, 24),
+    endDate: normalizeText(row.endDate, 24),
+    createdAt: normalizeText(row.createdAt, 48),
+    updatedAt: normalizeText(row.updatedAt, 48),
+    sourceName: normalizeText(row.sourceName, 160),
+    sortIndex: normalizeNumber(row.sortIndex)
+  };
+}
+
+function normalizeJourneyDayRow(row) {
+  if (
+    !row ||
+    typeof row !== 'object' ||
+    Array.isArray(row) ||
+    typeof row.id !== 'string' ||
+    typeof row.tripId !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: normalizeText(row.id, 160),
+    tripId: normalizeText(row.tripId, 160),
+    dayLabel: normalizeText(row.dayLabel, 80),
+    date: normalizeText(row.date, 24),
+    city: normalizeText(row.city, 160),
+    stay: normalizeText(row.stay, 220),
+    sortIndex: normalizeNumber(row.sortIndex)
+  };
+}
+
+function normalizeJourneyEntryRow(row) {
+  if (
+    !row ||
+    typeof row !== 'object' ||
+    Array.isArray(row) ||
+    typeof row.id !== 'string' ||
+    typeof row.tripId !== 'string' ||
+    typeof row.dayId !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: normalizeText(row.id, 160),
+    tripId: normalizeText(row.tripId, 160),
+    dayId: normalizeText(row.dayId, 160),
+    time: normalizeText(row.time, 24),
+    endTime: normalizeText(row.endTime, 24),
+    city: normalizeText(row.city, 160),
+    plan: normalizeText(row.plan, 500),
+    stay: normalizeText(row.stay, 220),
+    transport: normalizeText(row.transport, 220),
+    duration: normalizeText(row.duration, 120),
+    note: normalizeText(row.note, 2000),
+    done: Boolean(row.done),
+    sortIndex: normalizeNumber(row.sortIndex)
+  };
+}
+
+function normalizeText(value, maxLength) {
+  return typeof value === 'string' ? value.slice(0, maxLength) : '';
+}
+
+function normalizeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function normalizeMemoryPhotos(photos) {

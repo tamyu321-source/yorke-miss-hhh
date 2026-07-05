@@ -50,6 +50,7 @@ export default createContextViewComponent('JourneyView');
       </div>
 
       <div class="travel-trip-actions">
+        <span class="travel-sync-pill">{{ journeySyncLabel }}</span>
         <button class="ghost-button" type="button" @click="createBlankJourneyTrip">新增旅程</button>
         <button class="ghost-button" type="button" @click="autoScheduleActiveJourney">自動排時段</button>
         <button class="ghost-button" type="button" @click="exportActiveJourneyCalendar">匯出</button>
@@ -130,6 +131,7 @@ export default createContextViewComponent('JourneyView');
               <input
                 v-model="activeJourneyDay.date"
                 type="date"
+                @input="queueJourneyTripsSave"
                 @change="updateJourneyDayField(activeJourneyDay.id, 'date', activeJourneyDay.date)"
               />
             </label>
@@ -138,6 +140,7 @@ export default createContextViewComponent('JourneyView');
               <input
                 v-model="activeJourneyDay.city"
                 placeholder="城市或區域"
+                @input="queueJourneyTripsSave"
                 @change="updateJourneyDayField(activeJourneyDay.id, 'city', activeJourneyDay.city)"
                 @blur="updateJourneyDayField(activeJourneyDay.id, 'city', activeJourneyDay.city)"
               />
@@ -147,6 +150,7 @@ export default createContextViewComponent('JourneyView');
               <input
                 v-model="activeJourneyDay.stay"
                 placeholder="飯店、民宿或地點"
+                @input="queueJourneyTripsSave"
                 @change="updateJourneyDayField(activeJourneyDay.id, 'stay', activeJourneyDay.stay)"
                 @blur="updateJourneyDayField(activeJourneyDay.id, 'stay', activeJourneyDay.stay)"
               />
@@ -173,6 +177,7 @@ export default createContextViewComponent('JourneyView');
                       type="time"
                       step="60"
                       aria-label="開始時間"
+                      @input="queueJourneyTripsSave"
                       @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'time', entry.time)"
                     />
                     <span></span>
@@ -181,6 +186,7 @@ export default createContextViewComponent('JourneyView');
                       type="time"
                       step="60"
                       aria-label="結束時間"
+                      @input="queueJourneyTripsSave"
                       @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'endTime', entry.endTime)"
                     />
                   </div>
@@ -199,6 +205,7 @@ export default createContextViewComponent('JourneyView');
                         v-model="entry.plan"
                         class="travel-event-title"
                         placeholder="行程安排"
+                        @input="queueJourneyTripsSave"
                         @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', entry.plan)"
                         @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'plan', entry.plan)"
                       />
@@ -209,12 +216,14 @@ export default createContextViewComponent('JourneyView');
                       <input
                         v-model="entry.transport"
                         placeholder="交通工具"
+                        @input="queueJourneyTripsSave"
                         @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', entry.transport)"
                         @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'transport', entry.transport)"
                       />
                       <input
                         v-model="entry.duration"
                         placeholder="車程/時間"
+                        @input="queueJourneyTripsSave"
                         @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', entry.duration)"
                         @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'duration', entry.duration)"
                       />
@@ -222,6 +231,7 @@ export default createContextViewComponent('JourneyView');
                     <textarea
                       v-model="entry.note"
                       placeholder="訂位、票券、注意事項"
+                      @input="queueJourneyTripsSave"
                       @change="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', entry.note)"
                       @blur="updateJourneyEntryField(activeJourneyDay.id, entry.id, 'note', entry.note)"
                     ></textarea>

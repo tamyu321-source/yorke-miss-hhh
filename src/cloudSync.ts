@@ -1,4 +1,9 @@
 import type { AppExportData } from './backup';
+import {
+  applyJourneyTablesToExportData,
+  createJourneyTablesFromExportData,
+  type JourneyCloudTables
+} from './journey/journeyTables';
 
 const CLOUD_API_URL = (import.meta.env.VITE_CLOUD_API_URL ?? '').replace(/\/$/, '');
 const CLOUD_SESSION_KEY = 'count-to-814:cloud-session';
@@ -31,6 +36,10 @@ type MemoryPhotosResponse = {
 
 type MemoryPhotoIdsResponse = {
   ids: string[];
+};
+
+type JourneyTablesResponse = {
+  data: JourneyCloudTables | null;
 };
 
 const CLOUD_FEATURES: CloudFeature[] = [
@@ -86,7 +95,7 @@ const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
   ],
   wishes: ['wishes'],
   period: ['period-records', 'period-privacy-mode'],
-  journey: ['journey-trips', 'active-journey-trip']
+  journey: ['journey-trips', 'active-journey-trip', 'journey-updated-at']
 };
 
 export function isCloudSyncConfigured() {
@@ -139,8 +148,9 @@ export async function fetchCloudState(token: string) {
     );
     const featureData = Object.fromEntries(responses) as Partial<Record<CloudFeature, CloudFeaturePayload | null>>;
     if (Object.values(featureData).some(Boolean)) {
-      const merged = mergeFeaturePayloads(featureData, legacyData);
+      let merged = mergeFeaturePayloads(featureData, legacyData);
       merged.photos = await fetchMemoryPhotos(token, merged.photos);
+      merged = await fetchJourneyTables(token, merged);
       return merged;
     }
   } catch (error) {
@@ -166,6 +176,9 @@ export async function saveCloudState(token: string, data: AppExportData, feature
     );
     if (featuresToSave.includes('memories')) {
       await saveMemoryPhotos(token, data.photos);
+    }
+    if (featuresToSave.includes('journey')) {
+      await saveJourneyTables(token, data);
     }
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
@@ -290,6 +303,31 @@ async function saveMemoryPhotos(token: string, photos: AppExportData['photos']) 
     token,
     body: JSON.stringify({ photos })
   });
+}
+
+async function fetchJourneyTables(token: string, data: AppExportData) {
+  try {
+    const response = await cloudFetch<JourneyTablesResponse>('/api/journey/tables', {
+      method: 'GET',
+      token
+    });
+    return applyJourneyTablesToExportData(data, response.data);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    return data;
+  }
+}
+
+async function saveJourneyTables(token: string, data: AppExportData) {
+  try {
+    await cloudFetch('/api/journey/tables', {
+      method: 'PUT',
+      token,
+      body: JSON.stringify({ data: createJourneyTablesFromExportData(data) })
+    });
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
 }
 
 function isNotFoundError(error: unknown) {
