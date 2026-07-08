@@ -1,19 +1,19 @@
 {
-  "tag_name": "v0.1.14",
-  "version": "0.1.14",
-  "release_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/tag/v0.1.14",
+  "tag_name": "v0.1.15",
+  "version": "0.1.15",
+  "release_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/tag/v0.1.15",
   "assets": [
     {
       "name": "BlackCatEzPrint-macOS-arm64.zip",
-      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.14/BlackCatEzPrint-macOS-arm64.zip"
+      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.15/BlackCatEzPrint-macOS-arm64.zip"
     },
     {
       "name": "BlackCatEzPrint-macOS-intel.zip",
-      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.14/BlackCatEzPrint-macOS-intel.zip"
+      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.15/BlackCatEzPrint-macOS-intel.zip"
     },
     {
       "name": "BlackCatEzPrint.exe",
-      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.14/BlackCatEzPrint.exe"
+      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.15/BlackCatEzPrint.exe"
     }
   ]
 }
