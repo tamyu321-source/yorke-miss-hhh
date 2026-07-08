@@ -1,19 +1,19 @@
 {
-  "tag_name": "v0.1.6",
-  "version": "0.1.6",
-  "release_url": "https://github.com/tamyu321-source/black-cat-transport/releases/tag/v0.1.6",
+  "tag_name": "v0.1.13",
+  "version": "0.1.13",
+  "release_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/tag/v0.1.13",
   "assets": [
     {
-      "name": "BlackCatEzPrint-Windows.exe",
-      "browser_download_url": "https://github.com/tamyu321-source/black-cat-transport/releases/download/v0.1.6/BlackCatEzPrint-Windows.exe"
-    },
-    {
       "name": "BlackCatEzPrint-macOS-arm64.zip",
-      "browser_download_url": "https://github.com/tamyu321-source/black-cat-transport/releases/download/v0.1.6/BlackCatEzPrint-macOS-arm64.zip"
+      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.13/BlackCatEzPrint-macOS-arm64.zip"
     },
     {
       "name": "BlackCatEzPrint-macOS-intel.zip",
-      "browser_download_url": "https://github.com/tamyu321-source/black-cat-transport/releases/download/v0.1.6/BlackCatEzPrint-macOS-intel.zip"
+      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.13/BlackCatEzPrint-macOS-intel.zip"
+    },
+    {
+      "name": "BlackCatEzPrint.exe",
+      "browser_download_url": "https://github.com/tamyu321-source/yorke-miss-hhh/releases/download/v0.1.13/BlackCatEzPrint.exe"
     }
   ]
 }
