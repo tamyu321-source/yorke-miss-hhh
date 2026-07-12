@@ -44,6 +44,24 @@ jobs:
       - name: Publish deployed service URL
         shell: bash
         run: |
-          service_url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          service_json="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json)"
+          service_url="$(jq -r '.status.url' <<< "$service_json")"
+          service_state="$(jq -c '{ingress: (.metadata.annotations["run.googleapis.com/ingress"] // .ingress // "unknown"), defaultUrlDisabled: (.metadata.annotations["run.googleapis.com/default-url-disabled"] // .defaultUriDisabled // "unknown"), ready: ([.status.conditions[]? | select(.type == "Ready")][0].status // "unknown")}' <<< "$service_json")"
           echo "Cloud Run URL: ${service_url}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Cloud Run URL::${service_url}"
+          echo "::notice title=Cloud Run service state::${service_state}"
+
+      - name: Verify public API health
+        shell: bash
+        run: |
+          service_url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          for attempt in 1 2 3 4 5; do
+            status="$(curl --silent --show-error --output /tmp/health-response --write-out '%{http_code}' "${service_url}/healthz")"
+            if [[ "$status" == "200" ]] && grep -q '"ok":true' /tmp/health-response; then
+              echo "Cloud Run health check passed at ${service_url}."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error title=Cloud Run health check failed::${service_url}/healthz returned HTTP ${status}"
+          exit 1
