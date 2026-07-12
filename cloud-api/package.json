@@ -7,7 +7,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node todaySync.test.js"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.6",

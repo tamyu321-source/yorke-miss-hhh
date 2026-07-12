@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Firestore, FieldValue } from '@google-cloud/firestore';
 import express from 'express';
+import { mergeTodayFeaturePayload } from './todaySync.js';
 
 const app = express();
 const firestore = new Firestore();
@@ -101,13 +102,29 @@ for (const [feature, path] of FEATURE_ROUTES) {
   app.put(path, requireAuth, async (request, response, next) => {
     try {
       const data = normalizeFeaturePayload(request.body?.data, feature);
-      await featureDocument(feature).set(
-        {
-          data,
-          updatedAt: FieldValue.serverTimestamp()
-        },
-        { merge: true }
-      );
+      const document = featureDocument(feature);
+      if (feature === 'today') {
+        await firestore.runTransaction(async (transaction) => {
+          const snapshot = await transaction.get(document);
+          const mergedData = mergeTodayFeaturePayload(snapshot.data()?.data, data);
+          transaction.set(
+            document,
+            {
+              data: mergedData,
+              updatedAt: FieldValue.serverTimestamp()
+            },
+            { merge: true }
+          );
+        });
+      } else {
+        await document.set(
+          {
+            data,
+            updatedAt: FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
       response.json({ ok: true });
     } catch (error) {
       next(error);

@@ -20,6 +20,12 @@ import {
 import { loadStoredPhotos, mergePhotos, savePhotos } from './photoDb';
 import { checkForAppUpdate as checkServiceWorkerUpdate, refreshForWaitingServiceWorker } from './pwa';
 import { restoreAppLocalStorage, storageKey } from './storage';
+import {
+  createRequiredCheckinDates,
+  mergeCheckinDates,
+  mergeMoodHistoryEntries,
+  parseStoredStringArray
+} from './todayHistory';
 import CountdownView from './views/CountdownView.vue';
 import JourneyView from './views/JourneyView.vue';
 import MemoriesView from './views/MemoriesView.vue';
@@ -52,7 +58,8 @@ import type {
 
 import {
   DAY_MS, OPENING_DURATION_MS, OPENING_RETURN_DURATION_MS, OPENING_SKIP_DURATION_MS,
-  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, JOURNEY_UPDATED_KIND,
+  OPENING_REDUCED_DURATION_MS, SETTINGS_UPDATED_KIND, TODAY_UPDATED_KIND,
+  TODAY_SHARED_UPDATED_KIND, CHECKINS_REPAIR_KIND, JOURNEY_UPDATED_KIND,
   MEMORIES_UPDATED_KIND, PERIOD_UPDATED_KIND, PREPARE_UPDATED_KIND, WISHES_UPDATED_KIND,
   THEME_CHROME_COLORS,
   JOURNEY_AUTO_TIME_SLOTS, BOY_NAME,
@@ -623,7 +630,6 @@ let bgmAudio: HTMLAudioElement | null = null;
 let bgmAudioFadeTimer: number | undefined;
 let themeStingerAudio: HTMLAudioElement | null = null;
 
-const TODAY_UPDATED_KIND = 'today-updated-at';
 const TODAY_STORAGE_KINDS = [
   'task',
   'message',
@@ -636,6 +642,12 @@ const TODAY_STORAGE_KINDS = [
   'radar-choice',
   'ritual-opened',
   'ritual-complete'
+];
+const TODAY_SHARED_STORAGE_KINDS = [
+  'checkins',
+  'mood-history',
+  TODAY_SHARED_UPDATED_KIND,
+  CHECKINS_REPAIR_KIND
 ];
 type DurableCloudFeature = Exclude<CloudFeature, 'settings' | 'today' | 'misc'>;
 const DURABLE_FEATURES: DurableCloudFeature[] = ['prepare', 'memories', 'wishes', 'period', 'journey'];
@@ -2085,10 +2097,8 @@ async function loadCloudData() {
         const localSettings = localStorage.getItem(storageKey('settings'));
         const localSettingsUpdatedAt = getLocalSettingsUpdatedAt();
         const cloudSettingsUpdatedAt = getCloudSettingsUpdatedAt(cloudData);
-        const localTodayKey = dateKey.value;
-        const localTodayState = captureLocalTodayState(localTodayKey);
-        const localTodayUpdatedAt = getLocalTodayUpdatedAt(localTodayKey);
-        const cloudTodayUpdatedAt = getCloudTodayUpdatedAt(cloudData, localTodayKey);
+        const localTodayStates = captureLocalTodayStates();
+        const localTodaySharedState = captureLocalTodaySharedState();
         const storedLocalMemoryPhotos = await loadStoredPhotos();
         const localFeatureStates = captureLocalFeatureStates(storedLocalMemoryPhotos);
         const shouldPreserveLocalMemories = shouldPreserveLocalFeature('memories', cloudData, localFeatureStates.memories.updatedAt);
@@ -2099,8 +2109,10 @@ async function loadCloudData() {
           setSettingsUpdatedAt(localSettingsUpdatedAt);
           shouldPushLocalAfterCloudLoad = true;
         }
-        if (localTodayUpdatedAt > cloudTodayUpdatedAt) {
-          restoreLocalTodayState(localTodayState);
+        if (restoreNewerLocalTodayStates(localTodayStates, cloudData)) {
+          shouldPushLocalAfterCloudLoad = true;
+        }
+        if (reconcileTodaySharedState(localTodaySharedState)) {
           shouldPushLocalAfterCloudLoad = true;
         }
         DURABLE_FEATURES.forEach((feature) => {
@@ -2244,6 +2256,10 @@ function setTodayUpdatedAt(key = dateKey.value, timestamp = Date.now()) {
   localStorage.setItem(storageKey(TODAY_UPDATED_KIND, key), String(timestamp));
 }
 
+function setTodaySharedUpdatedAt(timestamp = Date.now()) {
+  localStorage.setItem(storageKey(TODAY_SHARED_UPDATED_KIND), String(timestamp));
+}
+
 function setJourneyUpdatedAt(timestamp = Date.now()) {
   localStorage.setItem(storageKey(JOURNEY_UPDATED_KIND), String(timestamp));
 }
@@ -2258,10 +2274,6 @@ function getLocalSettingsUpdatedAt() {
 
 function getCloudSettingsUpdatedAt(data: AppExportData) {
   return getStorageTimestamp(data.localStorage[storageKey(SETTINGS_UPDATED_KIND)]);
-}
-
-function getLocalTodayUpdatedAt(key = dateKey.value) {
-  return getStorageTimestamp(localStorage.getItem(storageKey(TODAY_UPDATED_KIND, key)));
 }
 
 function getCloudTodayUpdatedAt(data: AppExportData, key = dateKey.value) {
@@ -2291,20 +2303,103 @@ function getStorageTimestamp(value: string | null | undefined) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function captureLocalTodayState(key: string) {
-  const localStorageEntries: Record<string, string | null> = {};
-  [...TODAY_STORAGE_KINDS, TODAY_UPDATED_KIND].forEach((kind) => {
-    const storageName = storageKey(kind, key);
-    localStorageEntries[storageName] = localStorage.getItem(storageName);
+function captureLocalTodayStates() {
+  const dateKeys = new Set<string>();
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const storageName = localStorage.key(index);
+    if (!storageName) continue;
+    const date = getTodayStorageDate(storageName);
+    if (date) dateKeys.add(date);
+  }
+
+  return [...dateKeys].map((key) => {
+    const entries: Record<string, string | null> = {};
+    [...TODAY_STORAGE_KINDS, TODAY_UPDATED_KIND].forEach((kind) => {
+      const storageName = storageKey(kind, key);
+      entries[storageName] = localStorage.getItem(storageName);
+    });
+    return {
+      key,
+      entries,
+      updatedAt: getStorageTimestamp(entries[storageKey(TODAY_UPDATED_KIND, key)]),
+      hasData: TODAY_STORAGE_KINDS.some((kind) => entries[storageKey(kind, key)] !== null)
+    };
   });
-  [storageKey('checkins'), storageKey('mood-history')].forEach((storageName) => {
-    localStorageEntries[storageName] = localStorage.getItem(storageName);
-  });
-  return localStorageEntries;
 }
 
-function restoreLocalTodayState(entries: Record<string, string | null>) {
-  restoreLocalStorageEntries(entries);
+function getTodayStorageDate(storageName: string) {
+  for (const kind of [...TODAY_STORAGE_KINDS, TODAY_UPDATED_KIND]) {
+    const prefix = `${storageKey(kind)}:`;
+    if (storageName.startsWith(prefix)) return storageName.slice(prefix.length);
+  }
+  return '';
+}
+
+function restoreNewerLocalTodayStates(
+  states: Array<{ key: string; entries: Record<string, string | null>; updatedAt: number; hasData: boolean }>,
+  cloudData: AppExportData
+) {
+  let restored = false;
+  states.forEach((state) => {
+    const cloudUpdatedAt = getCloudTodayUpdatedAt(cloudData, state.key);
+    const cloudHasData = TODAY_STORAGE_KINDS.some(
+      (kind) => cloudData.localStorage[storageKey(kind, state.key)] !== undefined
+    );
+    if (state.updatedAt <= cloudUpdatedAt && (cloudHasData || !state.hasData)) return;
+    restoreLocalStorageEntries(state.entries);
+    restored = true;
+  });
+  return restored;
+}
+
+function captureLocalTodaySharedState() {
+  return Object.fromEntries(
+    TODAY_SHARED_STORAGE_KINDS.map((kind) => {
+      const storageName = storageKey(kind);
+      return [storageName, localStorage.getItem(storageName)];
+    })
+  ) as Record<string, string | null>;
+}
+
+function reconcileTodaySharedState(localEntries: Record<string, string | null> = {}) {
+  const checkinsKey = storageKey('checkins');
+  const moodHistoryKey = storageKey('mood-history');
+  const repairKey = storageKey(CHECKINS_REPAIR_KIND);
+  const updatedAtKey = storageKey(TODAY_SHARED_UPDATED_KIND);
+  const localRepairDone = localEntries[repairKey] === 'done';
+  const currentRepairDone = localStorage.getItem(repairKey) === 'done';
+  const requiredDates = localRepairDone || currentRepairDone ? [] : createRequiredCheckinDates();
+  const mergedCheckins = mergeCheckinDates(
+    parseStoredStringArray(localEntries[checkinsKey]),
+    parseStoredStringArray(localStorage.getItem(checkinsKey)),
+    requiredDates
+  );
+  const mergedMoodHistory = mergeMoodHistoryEntries(
+    parseStoredStringArray(localEntries[moodHistoryKey]),
+    parseStoredStringArray(localStorage.getItem(moodHistoryKey))
+  );
+  const nextCheckins = JSON.stringify(mergedCheckins);
+  const nextMoodHistory = JSON.stringify(mergedMoodHistory);
+  const contentChanged =
+    localStorage.getItem(checkinsKey) !== nextCheckins ||
+    localStorage.getItem(moodHistoryKey) !== nextMoodHistory ||
+    !currentRepairDone;
+
+  localStorage.setItem(checkinsKey, nextCheckins);
+  localStorage.setItem(moodHistoryKey, nextMoodHistory);
+  localStorage.setItem(repairKey, 'done');
+  checkins.value = mergedCheckins;
+  moodHistory.value = mergedMoodHistory;
+
+  const localUpdatedAt = getStorageTimestamp(localEntries[updatedAtKey]);
+  const currentUpdatedAt = getStorageTimestamp(localStorage.getItem(updatedAtKey));
+  const shouldRestoreNewerMarker = localUpdatedAt > currentUpdatedAt;
+  if (contentChanged) {
+    setTodaySharedUpdatedAt();
+  } else if (shouldRestoreNewerMarker) {
+    setTodaySharedUpdatedAt(localUpdatedAt);
+  }
+  return contentChanged || shouldRestoreNewerMarker;
 }
 
 function captureLocalFeatureStates(memoryPhotoFallback: MemoryPhoto[] = []) {
@@ -2506,8 +2601,9 @@ function loadSuitcase() {
 
 function checkInToday() {
   if (checkedInToday.value) return;
-  checkins.value = [...checkins.value, dateKey.value].sort();
+  checkins.value = mergeCheckinDates(checkins.value, [dateKey.value]);
   localStorage.setItem(storageKey('checkins'), JSON.stringify(checkins.value));
+  setTodaySharedUpdatedAt();
   setTodayUpdatedAt();
   requestCloudSync('today');
   launchThemeBurst();
@@ -2516,17 +2612,7 @@ function checkInToday() {
 }
 
 function loadCheckins() {
-  const stored = localStorage.getItem(storageKey('checkins'));
-  if (!stored) return;
-
-  try {
-    const parsed = JSON.parse(stored);
-    if (Array.isArray(parsed)) {
-      checkins.value = parsed.filter((item) => typeof item === 'string');
-    }
-  } catch {
-    checkins.value = [];
-  }
+  reconcileTodaySharedState();
 }
 
 function drawFortune() {
@@ -2545,22 +2631,15 @@ function addMoodHistory(moodId: string) {
   const entry = `${dateKey.value}:${moodId}`;
   const next = moodHistory.value.filter((item) => !item.startsWith(`${dateKey.value}:`));
   next.push(entry);
-  moodHistory.value = next;
-  localStorage.setItem(storageKey('mood-history'), JSON.stringify(next));
+  moodHistory.value = mergeMoodHistoryEntries(next);
+  localStorage.setItem(storageKey('mood-history'), JSON.stringify(moodHistory.value));
+  setTodaySharedUpdatedAt();
 }
 
 function loadMoodHistory() {
-  const stored = localStorage.getItem(storageKey('mood-history'));
-  if (!stored) return;
-
-  try {
-    const parsed = JSON.parse(stored);
-    if (Array.isArray(parsed)) {
-      moodHistory.value = parsed.filter((item) => typeof item === 'string');
-    }
-  } catch {
-    moodHistory.value = [];
-  }
+  moodHistory.value = mergeMoodHistoryEntries(
+    parseStoredStringArray(localStorage.getItem(storageKey('mood-history')))
+  );
 }
 
 function toggleCapsule(index: number) {
@@ -3665,6 +3744,7 @@ function resetToday() {
   moodHistory.value = moodHistory.value.filter((entry) => !entry.startsWith(`${dateKey.value}:`));
   localStorage.setItem(storageKey('checkins'), JSON.stringify(checkins.value));
   localStorage.setItem(storageKey('mood-history'), JSON.stringify(moodHistory.value));
+  setTodaySharedUpdatedAt();
   setTodayUpdatedAt();
   if (isMeetingDay.value) {
     meetingChecklist.value = [];

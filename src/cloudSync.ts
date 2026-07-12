@@ -1,10 +1,13 @@
 import type { AppExportData } from './backup';
 import {
+  CHECKINS_REPAIR_KIND,
   JOURNEY_UPDATED_KIND,
   MEMORIES_UPDATED_KIND,
   PERIOD_UPDATED_KIND,
   PREPARE_UPDATED_KIND,
   SETTINGS_UPDATED_KIND,
+  TODAY_SHARED_UPDATED_KIND,
+  TODAY_UPDATED_KIND,
   WISHES_UPDATED_KIND
 } from './data/appData';
 import {
@@ -86,7 +89,9 @@ const FEATURE_KINDS: Record<Exclude<CloudFeature, 'misc'>, string[]> = {
     'radar-choice',
     'ritual-opened',
     'ritual-complete',
-    'today-updated-at',
+    TODAY_UPDATED_KIND,
+    TODAY_SHARED_UPDATED_KIND,
+    CHECKINS_REPAIR_KIND,
     'checkins',
     'mood-history'
   ],
