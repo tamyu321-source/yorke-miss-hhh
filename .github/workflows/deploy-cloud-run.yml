@@ -42,4 +42,6 @@ jobs:
       - name: Publish deployed service URL
         shell: bash
         run: |
-          echo "Cloud Run URL: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          service_url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          echo "Cloud Run URL: ${service_url}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Cloud Run URL::${service_url}"
