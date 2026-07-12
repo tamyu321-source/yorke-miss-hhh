@@ -28,7 +28,8 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
-      - uses: google-github-actions/deploy-cloudrun@v3
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
           region: ${{ env.REGION }}
@@ -37,3 +38,7 @@ jobs:
           flags: >-
             --allow-unauthenticated
             --set-env-vars=APP_PASSWORD=${{ secrets.APP_PASSWORD }},SESSION_SECRET=${{ secrets.CLOUD_RUN_SESSION_SECRET }},ALLOWED_ORIGIN=${{ vars.CLOUD_RUN_ALLOWED_ORIGIN }}
+
+      - name: Publish deployed service URL
+        shell: bash
+        run: echo "Cloud Run URL: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
