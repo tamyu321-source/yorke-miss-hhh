@@ -41,4 +41,5 @@ jobs:
 
       - name: Publish deployed service URL
         shell: bash
-        run: echo "Cloud Run URL: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Cloud Run URL: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
