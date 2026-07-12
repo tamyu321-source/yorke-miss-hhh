@@ -37,6 +37,7 @@ jobs:
           source: ./cloud-api
           flags: >-
             --allow-unauthenticated
+            --default-url
             --ingress=all
             --set-env-vars=APP_PASSWORD=${{ secrets.APP_PASSWORD }},SESSION_SECRET=${{ secrets.CLOUD_RUN_SESSION_SECRET }},ALLOWED_ORIGIN=${{ vars.CLOUD_RUN_ALLOWED_ORIGIN }}
 
