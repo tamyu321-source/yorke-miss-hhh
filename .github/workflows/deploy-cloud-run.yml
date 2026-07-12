@@ -56,12 +56,12 @@ jobs:
         run: |
           service_url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
           for attempt in 1 2 3 4 5; do
-            status="$(curl --silent --show-error --output /tmp/health-response --write-out '%{http_code}' "${service_url}/healthz")"
+            status="$(curl --silent --show-error --output /tmp/health-response --write-out '%{http_code}' "${service_url}/health")"
             if [[ "$status" == "200" ]] && grep -q '"ok":true' /tmp/health-response; then
               echo "Cloud Run health check passed at ${service_url}."
               exit 0
             fi
             sleep 5
           done
-          echo "::error title=Cloud Run health check failed::${service_url}/healthz returned HTTP ${status}"
+          echo "::error title=Cloud Run health check failed::${service_url}/health returned HTTP ${status}"
           exit 1

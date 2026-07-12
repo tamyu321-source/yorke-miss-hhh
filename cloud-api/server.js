@@ -46,7 +46,7 @@ app.use((request, response, next) => {
   next();
 });
 
-app.get('/healthz', (_request, response) => {
+app.get('/health', (_request, response) => {
   response.json({ ok: true });
 });
 

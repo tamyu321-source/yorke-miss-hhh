@@ -81,7 +81,7 @@ npm start
 健康檢查：
 
 ```text
-GET /healthz
+GET /health
 ```
 
 主要環境變數：
